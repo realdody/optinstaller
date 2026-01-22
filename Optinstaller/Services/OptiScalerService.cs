@@ -18,7 +18,6 @@ public class OptiScalerService
     private const string OptiPatcherUrl = "https://raw.githubusercontent.com/optiscaler/OptiPatcher/main/OptiPatcher/dllmain.cpp";
     private const string OptiPatcherDownloadUrl = "https://github.com/optiscaler/OptiPatcher/releases/download/rolling/OptiPatcher.asi";
 
-    // Potential filenames user might choose
     private static readonly string[] PossibleFilenames = 
     { 
         "dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll", 
@@ -29,11 +28,9 @@ public class OptiScalerService
     {
         installedFilename = string.Empty;
         
-        // Check for OptiScaler.ini first as a strong indicator
         if (!File.Exists(Path.Combine(gamePath, OptiScalerIniName)))
             return false;
 
-        // Check for any of the possible DLLs
         foreach (var file in PossibleFilenames)
         {
             var path = Path.Combine(gamePath, file);
@@ -41,7 +38,6 @@ public class OptiScalerService
             {
                 try
                 {
-                    // Validate it's actually OptiScaler
                     var info = FileVersionInfo.GetVersionInfo(path);
                     if ((info.ProductName?.Contains("OptiScaler", StringComparison.OrdinalIgnoreCase) == true) ||
                         (info.FileDescription?.Contains("OptiScaler", StringComparison.OrdinalIgnoreCase) == true) ||
@@ -53,7 +49,6 @@ public class OptiScalerService
                 }
                 catch
                 {
-                    // Ignore errors reading version info
                 }
             }
         }
@@ -69,7 +64,6 @@ public class OptiScalerService
             var versionPath = options.VersionPath;
             var targetFilename = options.TargetFilename;
 
-            // Find the source DLL (OptiScaler.dll)
             var sourceDll = Path.Combine(versionPath, "OptiScaler.dll");
             
             if (!File.Exists(sourceDll))
@@ -77,12 +71,9 @@ public class OptiScalerService
 
             var dest = Path.Combine(gamePath, targetFilename);
 
-            // 1. Copy DLL
-            // If target exists, delete it first (overwrite logic should be handled by caller prompt, but we force here)
             if (File.Exists(dest)) File.Delete(dest);
             File.Copy(sourceDll, dest, true);
 
-            // 2. Copy/Create Config if missing
             var configPath = Path.Combine(gamePath, OptiScalerIniName);
             var sourceConfig = Path.Combine(versionPath, OptiScalerIniName);
             
@@ -91,7 +82,6 @@ public class OptiScalerService
                 File.Copy(sourceConfig, configPath);
             }
 
-            // 3. Configure Spoofing (Dxgi=auto/false)
             if (File.Exists(configPath))
             {
                 var content = File.ReadAllText(configPath);
@@ -103,7 +93,6 @@ public class OptiScalerService
                                      .Replace("Dxgi=true", "Dxgi=false");
                 }
                 
-                // If OptiPatcher is used, enable ASI loading
                 if (options.UseOptiPatcher)
                 {
                      content = content.Replace("LoadAsiPlugins=auto", "LoadAsiPlugins=true");
@@ -113,7 +102,6 @@ public class OptiScalerService
                 File.WriteAllText(configPath, content);
             }
 
-            // 4. Download OptiPatcher if requested
             if (options.UseOptiPatcher)
             {
                 var pluginsDir = Path.Combine(gamePath, "plugins");
@@ -127,7 +115,6 @@ public class OptiScalerService
                 await File.WriteAllBytesAsync(patcherDest, data);
             }
 
-            // 5. Create Uninstaller Bat (if requested)
             if (options.CreateUninstaller)
             {
                  CreateUninstallerBat(gamePath, targetFilename);
@@ -170,15 +157,12 @@ public class OptiScalerService
     {
         try
         {
-            // 1. Get code from GitHub
             using var client = new HttpClient();
             var code = await client.GetStringAsync(OptiPatcherUrl);
 
-            // 2. Scan local exes
             var exes = Directory.GetFiles(gamePath, "*.exe").Select(Path.GetFileName).ToList();
             if (!exes.Any()) return false;
 
-            // 3. Regex Match logic
             // Match CHECK_UE(Name) -> Name-win64-shipping.exe
             var ueMatches = Regex.Matches(code, @"CHECK_UE\s*\(\s*([a-zA-Z0-9_]+)\s*\)");
             foreach (Match match in ueMatches)
@@ -197,8 +181,7 @@ public class OptiScalerService
                 }
             }
 
-            // Match exact exeName == "Name.exe"
-            // Simple approximation of the C++ logic: exeName == "Foo.exe"
+            // Simple approximation of the C++ logic for direct exe matches
             var directMatches = Regex.Matches(code, @"exeName\s*==\s*[\x22\x27]([^\x22\x27]+)[\x22\x27]");
             foreach (Match match in directMatches)
             {
@@ -224,7 +207,6 @@ public class OptiScalerService
     {
         await Task.Run(() =>
         {
-            // List of files to remove based on the batch script
             var filesToRemove = new List<string>
             {
                 OptiScalerLogName,
@@ -244,7 +226,6 @@ public class OptiScalerService
                 if (File.Exists(path)) File.Delete(path);
             }
             
-            // Remove plugins/OptiPatcher.asi
             var patcher = Path.Combine(gamePath, "plugins", "OptiPatcher.asi");
             if (File.Exists(patcher)) File.Delete(patcher);
             
@@ -252,7 +233,6 @@ public class OptiScalerService
             if (Directory.Exists(pluginsDir) && !Directory.EnumerateFileSystemEntries(pluginsDir).Any())
                 Directory.Delete(pluginsDir);
 
-            // Directories to remove
             var dirsToRemove = new[] { "D3D12_Optiscaler", "DlssOverrides", "Licenses" };
             foreach (var dir in dirsToRemove)
             {

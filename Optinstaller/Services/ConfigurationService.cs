@@ -29,7 +29,6 @@ public class ConfigurationService
             }
             catch
             {
-                // Ignore errors, start fresh
                 CurrentConfig = new AppConfig();
             }
         }
@@ -44,7 +43,6 @@ public class ConfigurationService
         }
         catch
         {
-            // Handle save error?
         }
     }
 }
