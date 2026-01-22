@@ -34,7 +34,7 @@ public partial class DashboardViewModel : ViewModelBase
     private string _targetFilename = "dxgi.dll";
 
     [ObservableProperty]
-    private bool _enableSpoofing = true; // Default to true (Nvidia behavior)
+    private bool _enableSpoofing = true;
 
     public List<string> TargetFilenames { get; } = new()
     {
@@ -49,7 +49,6 @@ public partial class DashboardViewModel : ViewModelBase
         _configService = new ConfigurationService();
     }
     
-    // Quick hack to initialize async data
     public async Task InitializeAsync()
     {
         await _configService.LoadAsync();
@@ -84,7 +83,6 @@ public partial class DashboardViewModel : ViewModelBase
             SelectedVersion = DownloadedVersions.First();
     }
 
-    // Method to be called from View code-behind with the storage provider
     public async Task AddGameFromPath(IStorageProvider storageProvider)
     {
         var result = await storageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
@@ -108,7 +106,6 @@ public partial class DashboardViewModel : ViewModelBase
 
             AddGameInternal(normalizedPath);
             
-            // Save config
             if (!_configService.CurrentConfig.SavedGamePaths.Contains(normalizedPath))
             {
                 _configService.CurrentConfig.SavedGamePaths.Add(normalizedPath);
@@ -138,8 +135,6 @@ public partial class DashboardViewModel : ViewModelBase
     {
         if (game == null) return;
         
-        // Ensure a version is selected. If multiple, maybe ask? For now, default to newest downloaded.
-        // We need to ensure we have versions.
         if (!DownloadedVersions.Any())
         {
             var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
@@ -154,24 +149,21 @@ public partial class DashboardViewModel : ViewModelBase
 
         var version = SelectedVersion ?? DownloadedVersions.First();
 
-        // Launch Wizard
         var wizardVm = new InstallationWizardViewModel(game, version);
         
         var dialog = new FluentAvalonia.UI.Controls.ContentDialog
         {
             Title = "Install OptiScaler",
             Content = new Views.InstallationWizardView { DataContext = wizardVm },
-            PrimaryButtonText = null, // Managed by view
+            PrimaryButtonText = null,
             SecondaryButtonText = null,
             CloseButtonText = null
         };
 
-        // Handle close request from VM
         wizardVm.RequestClose += (s, e) => dialog.Hide();
 
         await dialog.ShowAsync();
 
-        // Refresh game status after wizard closes
         game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename);
         game.InstalledFilename = filename;
         
@@ -207,7 +199,6 @@ public partial class DashboardViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            // Simple error reporting
             var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
             {
                 Title = "Uninstall Error",

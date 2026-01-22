@@ -11,7 +11,6 @@ public partial class DashboardView : UserControl
     {
         InitializeComponent();
         
-        // When view loads, trigger version refresh if VM is attached
         this.Loaded += DashboardView_Loaded;
     }
 
@@ -27,7 +26,6 @@ public partial class DashboardView : UserControl
     {
         if (DataContext is DashboardViewModel vm)
         {
-            // Get the TopLevel to access StorageProvider
             var topLevel = TopLevel.GetTopLevel(this);
             if (topLevel?.StorageProvider != null)
             {

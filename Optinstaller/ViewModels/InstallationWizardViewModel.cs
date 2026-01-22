@@ -21,27 +21,22 @@ public partial class InstallationWizardViewModel : ViewModelBase
     [ObservableProperty] private bool _canGoBack = false;
     [ObservableProperty] private string _nextButtonText = "Next";
 
-    // Step 1: Warnings
     [ObservableProperty] private bool _showEngineWarning;
     [ObservableProperty] private bool _isCheckingEnvironment;
     
-    // Step 2: Filename
     [ObservableProperty] private string _selectedFilename = "dxgi.dll";
     [ObservableProperty] private bool _fileExistsWarning;
     
-    // Step 3: GPU/Spoofing
     [ObservableProperty] private bool _isNvidia;
     [ObservableProperty] private bool _enableSpoofing = true;
     [ObservableProperty] private bool _isWine;
     [ObservableProperty] private string _gpuName = "Detecting...";
     
-    // Step 4: OptiPatcher
     [ObservableProperty] private bool _checkingOptiPatcher;
     [ObservableProperty] private bool _optiPatcherSupported;
     [ObservableProperty] private bool _useOptiPatcher;
     [ObservableProperty] private string _optiPatcherStatus = "Checking compatibility...";
     
-    // Step 5: Summary
     [ObservableProperty] private bool _createUninstaller = true;
     [ObservableProperty] private bool _isInstalling;
     [ObservableProperty] private string _installStatus = "";
@@ -53,7 +48,6 @@ public partial class InstallationWizardViewModel : ViewModelBase
         "d3d12.dll", "wininet.dll", "winhttp.dll", "OptiScaler.asi"
     };
 
-    // Wizard Page Visibility Helpers
     public bool IsStep0 => StepIndex == 0;
     public bool IsStep1 => StepIndex == 1;
     public bool IsStep2 => StepIndex == 2;
@@ -81,19 +75,16 @@ public partial class InstallationWizardViewModel : ViewModelBase
         {
             IsCheckingEnvironment = true;
 
-            // Check Engine
             if (Directory.Exists(Path.Combine(_options.GamePath, "Engine")))
             {
                 ShowEngineWarning = true;
             }
 
-            // Check Wine (Simple registry check mock or file check)
             // In .NET cross-platform, difficult to check registry easily without platform guards.
             // We'll assume Windows logic primarily as requested.
             _options.IsWine = CheckWine();
             IsWine = _options.IsWine;
 
-            // Check GPU
             await CheckGpu();
 
             IsCheckingEnvironment = false;
@@ -109,7 +100,6 @@ public partial class InstallationWizardViewModel : ViewModelBase
     private bool CheckWine()
     {
         // Simple heuristic: Z: drive mapping usually exists in Wine
-        // Or check specific environment variables
         return Environment.GetEnvironmentVariable("WINEDLLPATH") != null;
     }
 
@@ -172,29 +162,25 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
         if (StepIndex == 0 && ShowEngineWarning)
         {
-            // Just acknowledgment
         }
 
-        if (StepIndex == 1) // Filename
+        if (StepIndex == 1)
         {
             var path = Path.Combine(_options.GamePath, SelectedFilename);
             if (File.Exists(path) && !FileExistsWarning)
             {
                 FileExistsWarning = true;
-                return; // Require second click to confirm
+                return;
             }
             _options.TargetFilename = SelectedFilename;
         }
 
-        if (StepIndex == 2) // GPU
+        if (StepIndex == 2)
         {
             _options.EnableSpoofing = EnableSpoofing;
             
-            // Trigger OptiPatcher check for next step
             CheckingOptiPatcher = true;
             OptiPatcherStatus = "Checking GitHub for compatibility...";
-            // Don't await here to allow UI transition, but we need result before showing step 3 fully?
-            // Let's await it.
             var supported = await _optiScalerService.CheckOptiPatcherSupportAsync(_options.GamePath);
             OptiPatcherSupported = supported;
             CheckingOptiPatcher = false;
@@ -210,7 +196,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
             }
         }
         
-        if (StepIndex == 4) // Install
+        if (StepIndex == 4)
         {
              IsInstalling = true;
              UpdateState();
@@ -250,7 +236,6 @@ public partial class InstallationWizardViewModel : ViewModelBase
     {
         CanGoBack = StepIndex > 0 && !IsInstalling && !InstallSuccess;
         
-        // Notify visibility properties changed
         OnPropertyChanged(nameof(IsStep0));
         OnPropertyChanged(nameof(IsStep1));
         OnPropertyChanged(nameof(IsStep2));
@@ -273,8 +258,6 @@ public partial class InstallationWizardViewModel : ViewModelBase
                 break;
             case 3: 
                 Title = "OptiPatcher"; 
-                // Skip this step if checking failed or not relevant? 
-                // The bat always checks.
                 break;
             case 4: 
                 Title = "Ready to Install"; 
@@ -290,8 +273,6 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
     private async Task Install()
     {
-        // IsInstalling state managed by caller (Next) or needs to be safe
-        // But Next() sets it. Let's just do the work.
         InstallStatus = "Installing OptiScaler...";
         _options.UseOptiPatcher = UseOptiPatcher;
         _options.CreateUninstaller = CreateUninstaller;
@@ -301,7 +282,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
             await _optiScalerService.InstallAsync(_options);
             InstallSuccess = true;
             InstallStatus = "Installation Complete!";
-            StepIndex++; // Go to finish
+            StepIndex++;
         }
         catch (Exception ex)
         {

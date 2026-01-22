@@ -10,14 +10,12 @@ public partial class GameConfigViewModel : ViewModelBase
 {
     private readonly string _configPath;
     
-    // Common Settings
-    [ObservableProperty] private bool _enableSpoofing; // Dxgi=auto/false
-    [ObservableProperty] private bool _enableOverlay;  // OverlayMenu=true/false
-    [ObservableProperty] private int _upscalerIndex;   // Upscaler=... (Index for combo)
-    [ObservableProperty] private float _renderScale = 1.0f; // RenderScale
-    [ObservableProperty] private float _sharpness = 0.0f;   // Sharpness
+    [ObservableProperty] private bool _enableSpoofing;
+    [ObservableProperty] private bool _enableOverlay;
+    [ObservableProperty] private int _upscalerIndex;
+    [ObservableProperty] private float _renderScale = 1.0f;
+    [ObservableProperty] private float _sharpness = 0.0f;
     
-    // Raw content for backup/advanced
     private string _rawContent = "";
 
     public string[] Upscalers { get; } = { "Auto", "DLSS", "FSR2", "XeSS", "FSR3" };
@@ -37,7 +35,7 @@ public partial class GameConfigViewModel : ViewModelBase
         _rawContent = File.ReadAllText(_configPath);
         
         // Simple parsing (IniParser would be better, but doing manual for simplicity/no-dep)
-        EnableSpoofing = !ContainsSetting("Dxgi", "false"); // Default/Auto is trueish
+        EnableSpoofing = !ContainsSetting("Dxgi", "false");
         EnableOverlay = ContainsSetting("OverlayMenu", "true");
         
         var upscaler = GetSetting("Upscaler");
@@ -47,7 +45,7 @@ public partial class GameConfigViewModel : ViewModelBase
             "fsr2" => 2,
             "xess" => 3,
             "fsr3" => 4,
-            _ => 0 // Auto/Default
+            _ => 0
         };
 
         if (float.TryParse(GetSetting("RenderScale"), out var rs)) RenderScale = rs;
@@ -78,8 +76,7 @@ public partial class GameConfigViewModel : ViewModelBase
     {
         if (!File.Exists(_configPath)) return;
 
-        // Update raw content with new values
-        // This is a naive replace, ideal would be a proper parser
+        // Update raw content with new values (naive replace, ideal would be a proper parser)
         UpdateSetting("Dxgi", EnableSpoofing ? "auto" : "false");
         UpdateSetting("OverlayMenu", EnableOverlay ? "true" : "false");
         
@@ -93,8 +90,6 @@ public partial class GameConfigViewModel : ViewModelBase
         };
         UpdateSetting("Upscaler", upscalerVal);
 
-        // Don't write scale/sharpness if default/empty to avoid cluttering if not present? 
-        // Or just force write. Let's force write if it existed, or append.
         UpdateSetting("RenderScale", RenderScale.ToString("0.0"));
         UpdateSetting("Sharpness", Sharpness.ToString("0.0"));
 
@@ -131,7 +126,6 @@ public partial class GameConfigViewModel : ViewModelBase
     [RelayCommand]
     private void OpenFile()
     {
-        // Open in default text editor
         try
         {
             new System.Diagnostics.Process

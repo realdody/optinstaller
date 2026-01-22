@@ -10,6 +10,6 @@ public class InstallationOptions
     public bool EnableSpoofing { get; set; }
     public bool UseOptiPatcher { get; set; }
     public bool CreateUninstaller { get; set; } = true;
-    public bool IsNvidia { get; set; } // Detected state
-    public bool IsWine { get; set; }   // Detected state
+    public bool IsNvidia { get; set; }
+    public bool IsWine { get; set; }
 }

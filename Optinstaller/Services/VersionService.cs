@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression; // Keep for fallback or other needs
+using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -36,7 +36,6 @@ public class VersionService
     {
         var versions = new List<OptiScalerVersion>();
 
-        // 1. Fetch from GitHub if possible
         try
         {
             var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(GitHubApiUrl);
@@ -44,7 +43,6 @@ public class VersionService
             {
                 foreach (var release in releases)
                 {
-                    // Filter for zip or 7z files
                     var asset = release.Assets?.FirstOrDefault(a => 
                         a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || 
                         a.Name.EndsWith(".7z", StringComparison.OrdinalIgnoreCase));
@@ -79,10 +77,8 @@ public class VersionService
             foreach (var dir in directories)
             {
                 var dirName = Path.GetFileName(dir);
-                // If we already have this version from GitHub, skip
                 if (versions.Any(v => v.TagName == dirName)) continue;
 
-                // Check if it's a valid version folder (has OptiScaler.dll)
                 if (File.Exists(Path.Combine(dir, "OptiScaler.dll")))
                 {
                     versions.Add(new OptiScalerVersion
@@ -122,7 +118,6 @@ public class VersionService
     {
         if (string.IsNullOrEmpty(version.DownloadUrl)) return;
 
-        // Use the actual file name from the URL or a default safe name
         var fileName = Path.GetFileName(new Uri(version.DownloadUrl).LocalPath);
         if (string.IsNullOrEmpty(fileName)) 
         {
@@ -165,7 +160,6 @@ public class VersionService
                 }
             }
 
-            // Extract
             var destDir = Path.Combine(_versionsDirectory, version.TagName);
             if (Directory.Exists(destDir)) Directory.Delete(destDir, true);
             Directory.CreateDirectory(destDir);
@@ -180,7 +174,6 @@ public class VersionService
                      {
                          if (string.IsNullOrEmpty(entry.Name) && entry.FullName.EndsWith("/")) 
                          {
-                             // Directory
                              continue;
                          }
 
@@ -203,7 +196,6 @@ public class VersionService
             }
             else
             {
-                 // Use SharpCompress for .7z and others
                  using (var archive = ArchiveFactory.Open(tempFile))
                  {
                      foreach (var entry in archive.Entries)
@@ -235,7 +227,6 @@ public class VersionService
             {
                 var nestedDir = subDirs[0];
                 
-                // Move files
                 foreach (var file in Directory.GetFiles(nestedDir))
                 {
                     var destFile = Path.Combine(destDir, Path.GetFileName(file));
@@ -243,7 +234,6 @@ public class VersionService
                     File.Move(file, destFile);
                 }
                 
-                // Move directories
                 foreach (var dir in Directory.GetDirectories(nestedDir))
                 {
                     var dirName = Path.GetFileName(dir);
@@ -307,7 +297,6 @@ public class VersionService
         version.LocalPath = string.Empty;
     }
 
-    // Helper classes for JSON deserialization
     private class GitHubRelease
     {
         [JsonPropertyName("tag_name")]
@@ -324,10 +313,6 @@ public class VersionService
 
         [JsonPropertyName("assets")]
         public List<GitHubAsset>? Assets { get; set; }
-        
-        // Explicit mapping not needed due to JsonPropertyName above, removing to avoid confusion/errors.
-        // [JsonPropertyName("body")] 
-        // public string Body { set => Description = value; }
     }
 
     private class GitHubAsset
