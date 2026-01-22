@@ -30,7 +30,11 @@ public partial class VersionManagerViewModel : ViewModelBase
     public VersionManagerViewModel()
     {
         _versionService = new VersionService();
-        _ = LoadVersions();
+    }
+
+    public async Task InitializeAsync()
+    {
+        await LoadVersions();
     }
 
     [RelayCommand]
@@ -40,13 +44,22 @@ public partial class VersionManagerViewModel : ViewModelBase
         ErrorMessage = string.Empty;
         Versions.Clear();
         
-        var versions = await _versionService.GetAvailableVersionsAsync();
-        foreach (var v in versions)
+        try 
         {
-            Versions.Add(v);
+            var versions = await _versionService.GetAvailableVersionsAsync();
+            foreach (var v in versions)
+            {
+                Versions.Add(v);
+            }
         }
-
-        IsLoading = false;
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Error loading versions: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
     }
 
     [RelayCommand]
@@ -63,14 +76,7 @@ public partial class VersionManagerViewModel : ViewModelBase
         try
         {
             await _versionService.DownloadVersionAsync(version, progress);
-            // Refresh state
-            var index = Versions.IndexOf(version);
-            if (index != -1)
-            {
-                // Force UI update if needed, though property change should handle it if object is same reference
-                Versions[index] = version; 
-                OnPropertyChanged(nameof(Versions));
-            }
+            await LoadVersions();
         }
         catch (Exception ex)
         {
@@ -84,18 +90,12 @@ public partial class VersionManagerViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void DeleteVersion(OptiScalerVersion version)
+    private async Task DeleteVersion(OptiScalerVersion version)
     {
         try
         {
             _versionService.DeleteVersion(version);
-            // Refresh UI state
-            var index = Versions.IndexOf(version);
-            if (index != -1)
-            {
-                Versions[index] = version; // Trigger update
-                OnPropertyChanged(nameof(Versions));
-            }
+            await LoadVersions();
         }
         catch (Exception ex)
         {

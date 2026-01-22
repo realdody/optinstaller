@@ -29,7 +29,7 @@ public partial class DashboardView : UserControl
         {
             // Get the TopLevel to access StorageProvider
             var topLevel = TopLevel.GetTopLevel(this);
-            if (topLevel != null)
+            if (topLevel?.StorageProvider != null)
             {
                 await vm.AddGameFromPath(topLevel.StorageProvider);
             }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -35,10 +36,25 @@ public class OptiScalerService
         // Check for any of the possible DLLs
         foreach (var file in PossibleFilenames)
         {
-            if (File.Exists(Path.Combine(gamePath, file)))
+            var path = Path.Combine(gamePath, file);
+            if (File.Exists(path))
             {
-                installedFilename = file;
-                return true;
+                try
+                {
+                    // Validate it's actually OptiScaler
+                    var info = FileVersionInfo.GetVersionInfo(path);
+                    if ((info.ProductName?.Contains("OptiScaler", StringComparison.OrdinalIgnoreCase) == true) ||
+                        (info.FileDescription?.Contains("OptiScaler", StringComparison.OrdinalIgnoreCase) == true) ||
+                        (info.CompanyName?.Contains("OptiScaler", StringComparison.OrdinalIgnoreCase) == true))
+                    {
+                        installedFilename = file;
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // Ignore errors reading version info
+                }
             }
         }
         
@@ -129,20 +145,20 @@ public class OptiScalerService
         sb.AppendLine("echo OptiScaler Uninstaller");
         sb.AppendLine("echo.");
         sb.AppendLine("set /p removeChoice=\"Do you want to remove OptiScaler? [y/n]: \"");
-        sb.AppendLine("if \"%removeChoice%\"==\"y\" (");
-        sb.AppendLine($"    del {OptiScalerLogName}");
-        sb.AppendLine($"    del {OptiScalerIniName}");
-        sb.AppendLine($"    del {filename}");
-        sb.AppendLine("    del fakenvapi.dll");
-        sb.AppendLine("    del fakenvapi.ini");
-        sb.AppendLine("    del fakenvapi.log");
-        sb.AppendLine("    del dlssg_to_fsr3_amd_is_better.dll");
-        sb.AppendLine("    del dlssg_to_fsr3.log");
-        sb.AppendLine("    if exist plugins\\OptiPatcher.asi del plugins\\OptiPatcher.asi");
-        sb.AppendLine("    if exist plugins rmdir plugins");
-        sb.AppendLine("    if exist D3D12_Optiscaler rmdir /s /q D3D12_Optiscaler");
-        sb.AppendLine("    if exist DlssOverrides rmdir /s /q DlssOverrides");
-        sb.AppendLine("    if exist Licenses rmdir /s /q Licenses");
+        sb.AppendLine("if /i \"%removeChoice%\"==\"y\" (");
+        sb.AppendLine($"    if exist \"{OptiScalerLogName}\" del \"{OptiScalerLogName}\"");
+        sb.AppendLine($"    if exist \"{OptiScalerIniName}\" del \"{OptiScalerIniName}\"");
+        sb.AppendLine($"    if exist \"{filename}\" del \"{filename}\"");
+        sb.AppendLine("    if exist \"fakenvapi.dll\" del \"fakenvapi.dll\"");
+        sb.AppendLine("    if exist \"fakenvapi.ini\" del \"fakenvapi.ini\"");
+        sb.AppendLine("    if exist \"fakenvapi.log\" del \"fakenvapi.log\"");
+        sb.AppendLine("    if exist \"dlssg_to_fsr3_amd_is_better.dll\" del \"dlssg_to_fsr3_amd_is_better.dll\"");
+        sb.AppendLine("    if exist \"dlssg_to_fsr3.log\" del \"dlssg_to_fsr3.log\"");
+        sb.AppendLine("    if exist \"plugins\\OptiPatcher.asi\" del \"plugins\\OptiPatcher.asi\"");
+        sb.AppendLine("    if exist \"plugins\" rmdir \"plugins\"");
+        sb.AppendLine("    if exist \"D3D12_Optiscaler\" rmdir /s /q \"D3D12_Optiscaler\"");
+        sb.AppendLine("    if exist \"DlssOverrides\" rmdir /s /q \"DlssOverrides\"");
+        sb.AppendLine("    if exist \"Licenses\" rmdir /s /q \"Licenses\"");
         sb.AppendLine("    echo OptiScaler removed!");
         sb.AppendLine("    pause");
         sb.AppendLine("    del %0");
@@ -174,8 +190,8 @@ public class OptiScalerService
                     var win64 = $"{baseName}-win64-shipping.exe";
                     var wingdk = $"{baseName}-wingdk-shipping.exe";
                     
-                    if (exes.Any(e => e.Equals(win64, StringComparison.OrdinalIgnoreCase) || 
-                                      e.Equals(wingdk, StringComparison.OrdinalIgnoreCase)))
+                    if (exes.Any(e => (e ?? "").Equals(win64, StringComparison.OrdinalIgnoreCase) || 
+                                      (e ?? "").Equals(wingdk, StringComparison.OrdinalIgnoreCase)))
                     {
                         return true;
                     }
@@ -190,7 +206,7 @@ public class OptiScalerService
                  if (match.Groups.Count > 1)
                  {
                      var name = match.Groups[1].Value;
-                     if (exes.Any(e => e.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                     if (exes.Any(e => (e ?? "").Equals(name, StringComparison.OrdinalIgnoreCase)))
                      {
                          return true;
                      }
@@ -219,7 +235,8 @@ public class OptiScalerService
                 "fakenvapi.ini",
                 "fakenvapi.log",
                 "dlssg_to_fsr3_amd_is_better.dll",
-                "dlssg_to_fsr3.log"
+                "dlssg_to_fsr3.log",
+                "Remove OptiScaler.bat"
             };
 
             foreach (var file in filesToRemove)

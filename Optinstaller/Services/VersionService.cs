@@ -192,19 +192,40 @@ public class VersionService
             // Check for nested folders (sometimes zips have a root folder)
             var subDirs = Directory.GetDirectories(destDir);
             var files = Directory.GetFiles(destDir);
-            if (files.Length == 0 && subDirs.Length == 1)
+            
+            while (files.Length == 0 && subDirs.Length == 1)
             {
-                // Move everything up one level
                 var nestedDir = subDirs[0];
+                
+                // Move files
                 foreach (var file in Directory.GetFiles(nestedDir))
                 {
-                    File.Move(file, Path.Combine(destDir, Path.GetFileName(file)));
+                    var destFile = Path.Combine(destDir, Path.GetFileName(file));
+                    if (File.Exists(destFile)) File.Delete(destFile);
+                    File.Move(file, destFile);
                 }
+                
+                // Move directories
                 foreach (var dir in Directory.GetDirectories(nestedDir))
                 {
-                    Directory.Move(dir, Path.Combine(destDir, Path.GetFileName(dir)));
+                    var dirName = Path.GetFileName(dir);
+                    var destSubDir = Path.Combine(destDir, dirName);
+                    
+                    if (Directory.Exists(destSubDir))
+                    {
+                        MergeDirectories(dir, destSubDir);
+                        Directory.Delete(dir, true);
+                    }
+                    else
+                    {
+                        Directory.Move(dir, destSubDir);
+                    }
                 }
+                
                 Directory.Delete(nestedDir);
+                
+                subDirs = Directory.GetDirectories(destDir);
+                files = Directory.GetFiles(destDir);
             }
 
             version.IsDownloaded = true;
@@ -216,6 +237,24 @@ public class VersionService
             {
                 File.Delete(tempFile);
             }
+        }
+    }
+
+    private void MergeDirectories(string sourceDir, string destDir)
+    {
+        if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
+
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var destFile = Path.Combine(destDir, Path.GetFileName(file));
+            if (File.Exists(destFile)) File.Delete(destFile);
+            File.Move(file, destFile);
+        }
+
+        foreach (var dir in Directory.GetDirectories(sourceDir))
+        {
+            var destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
+            MergeDirectories(dir, destSubDir);
         }
     }
 

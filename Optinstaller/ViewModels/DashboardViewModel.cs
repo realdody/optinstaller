@@ -1,3 +1,4 @@
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -83,12 +84,6 @@ public partial class DashboardViewModel : ViewModelBase
             SelectedVersion = DownloadedVersions.First();
     }
 
-    [RelayCommand]
-    private async Task AddGame()
-    {
-        // Placeholder
-    }
-    
     // Method to be called from View code-behind with the storage provider
     public async Task AddGameFromPath(IStorageProvider storageProvider)
     {
@@ -174,12 +169,36 @@ public partial class DashboardViewModel : ViewModelBase
     {
         if (game == null || !game.IsInstalled) return;
 
-        // Confirmation?
-        await _optiScalerService.UninstallAsync(game.GamePath, game.InstalledFilename);
+        var dialog = new FluentAvalonia.UI.Controls.ContentDialog
+        {
+            Title = "Confirm Uninstall",
+            Content = $"Are you sure you want to uninstall OptiScaler from {game.Name}?",
+            PrimaryButtonText = "Uninstall",
+            CloseButtonText = "Cancel"
+        };
 
-        game.IsInstalled = false;
-        game.InstalledFilename = string.Empty;
-        game.CurrentVersion = "Not Installed";
+        if (await dialog.ShowAsync() != FluentAvalonia.UI.Controls.ContentDialogResult.Primary)
+            return;
+
+        try
+        {
+            await _optiScalerService.UninstallAsync(game.GamePath, game.InstalledFilename);
+
+            game.IsInstalled = false;
+            game.InstalledFilename = string.Empty;
+            game.CurrentVersion = "Not Installed";
+        }
+        catch (Exception ex)
+        {
+            // Simple error reporting
+            var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "Uninstall Error",
+                Content = $"Failed to uninstall: {ex.Message}",
+                CloseButtonText = "OK"
+            };
+            await errorDialog.ShowAsync();
+        }
     }
     [RelayCommand]
     private async Task ConfigureGame(GameInstance? game)

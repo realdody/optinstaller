@@ -56,7 +56,7 @@ public partial class GameConfigViewModel : ViewModelBase
 
     private string GetSetting(string key)
     {
-        foreach (var line in _rawContent.Split('\n'))
+        foreach (var line in _rawContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None))
         {
             var trim = line.Trim();
             if (trim.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))

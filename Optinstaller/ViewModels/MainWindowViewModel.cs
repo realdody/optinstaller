@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using System.Threading.Tasks;
 
 namespace Optinstaller.ViewModels;
 
@@ -14,5 +15,11 @@ public partial class MainWindowViewModel : ViewModelBase
     public MainWindowViewModel()
     {
         _currentPage = Dashboard;
+    }
+
+    public async Task InitializeAsync()
+    {
+        await Dashboard.InitializeAsync();
+        await Versions.InitializeAsync();
     }
 }

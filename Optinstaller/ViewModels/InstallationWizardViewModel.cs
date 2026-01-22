@@ -77,25 +77,33 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
     private async void InitializeAsync()
     {
-        IsCheckingEnvironment = true;
-
-        // Check Engine
-        if (Directory.Exists(Path.Combine(_options.GamePath, "Engine")))
+        try
         {
-            ShowEngineWarning = true;
+            IsCheckingEnvironment = true;
+
+            // Check Engine
+            if (Directory.Exists(Path.Combine(_options.GamePath, "Engine")))
+            {
+                ShowEngineWarning = true;
+            }
+
+            // Check Wine (Simple registry check mock or file check)
+            // In .NET cross-platform, difficult to check registry easily without platform guards.
+            // We'll assume Windows logic primarily as requested.
+            _options.IsWine = CheckWine();
+            IsWine = _options.IsWine;
+
+            // Check GPU
+            await CheckGpu();
+
+            IsCheckingEnvironment = false;
+            UpdateState();
         }
-
-        // Check Wine (Simple registry check mock or file check)
-        // In .NET cross-platform, difficult to check registry easily without platform guards.
-        // We'll assume Windows logic primarily as requested.
-        _options.IsWine = CheckWine();
-        IsWine = _options.IsWine;
-
-        // Check GPU
-        await CheckGpu();
-
-        IsCheckingEnvironment = false;
-        UpdateState();
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Initialization failed: {ex}");
+            IsCheckingEnvironment = false;
+        }
     }
 
     private bool CheckWine()
@@ -111,32 +119,49 @@ public partial class InstallationWizardViewModel : ViewModelBase
         {
             GpuName = "Wine Environment (Skipping Detection)";
             IsNvidia = false; 
-            EnableSpoofing = false; // "Skipping over spoofing checks" -> implies we assume no spoofing or user handles it?
-            // Actually bat says: "Using wine, skipping over spoofing checks. If you need, you can disable spoofing..."
-            // It skips the prompt but allows config edit. 
-            // Let's default to True (Auto) but allow user to change.
-            EnableSpoofing = true; 
+            EnableSpoofing = true;
             return;
         }
 
-        // Check for nvapi64.dll as proxy for Nvidia
-        var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        if (File.Exists(Path.Combine(system32, "nvapi64.dll")))
+        bool foundNvidia = false;
+        
+        await Task.Run(() =>
+        {
+            try
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    var searcher = new System.Management.ManagementObjectSearcher("SELECT * FROM Win32_VideoController");
+                    foreach (var obj in searcher.Get())
+                    {
+                        var name = obj["Name"]?.ToString() ?? "";
+                        if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
+                        {
+                            foundNvidia = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback to nvapi check
+                var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+                if (File.Exists(Path.Combine(system32, "nvapi64.dll"))) foundNvidia = true;
+            }
+        });
+
+        if (foundNvidia)
         {
             IsNvidia = true;
             GpuName = "Nvidia GPU Detected";
-            EnableSpoofing = true; // "Skip spoofing if Nvidia" -> Bat creates config with Auto (default).
-            // Actually bat logic:
-            // if Nvidia -> completeSetup (Spoofing stays Auto/Default)
-            // if AMD -> Ask user.
-            // If user says "Yes" -> Auto. If "No" -> Dxgi=false.
-            // So if Nvidia, we want EnableSpoofing = true (which leaves it as Auto).
+            EnableSpoofing = true;
         }
         else
         {
             IsNvidia = false;
             GpuName = "AMD/Intel GPU Detected";
-            EnableSpoofing = true; // Default to yes, user can uncheck
+            EnableSpoofing = true;
         }
     }
 
@@ -263,6 +288,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
             await _optiScalerService.InstallAsync(_options);
             InstallSuccess = true;
             InstallStatus = "Installation Complete!";
+            IsInstalling = false;
             StepIndex++; // Go to finish
             UpdateState();
         }
