@@ -95,15 +95,23 @@ public partial class DashboardViewModel : ViewModelBase
 
         if (result.Count > 0)
         {
-            var path = result[0].Path.LocalPath;
-            if (Games.Any(g => g.GamePath == path)) return;
+            var rawPath = result[0].Path.LocalPath;
+            var normalizedPath = System.IO.Path.GetFullPath(rawPath)
+                .TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
 
-            AddGameInternal(path);
+            if (OperatingSystem.IsWindows())
+            {
+                normalizedPath = normalizedPath.ToLowerInvariant();
+            }
+
+            if (Games.Any(g => g.GamePath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase))) return;
+
+            AddGameInternal(normalizedPath);
             
             // Save config
-            if (!_configService.CurrentConfig.SavedGamePaths.Contains(path))
+            if (!_configService.CurrentConfig.SavedGamePaths.Contains(normalizedPath))
             {
-                _configService.CurrentConfig.SavedGamePaths.Add(path);
+                _configService.CurrentConfig.SavedGamePaths.Add(normalizedPath);
                 await _configService.SaveAsync();
             }
         }
