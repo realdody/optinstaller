@@ -169,10 +169,37 @@ public class VersionService
             var destDir = Path.Combine(_versionsDirectory, version.TagName);
             if (Directory.Exists(destDir)) Directory.Delete(destDir, true);
             Directory.CreateDirectory(destDir);
+            
+            var destDirFullPath = Path.GetFullPath(destDir);
 
             if (tempFile.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             {
-                 ZipFile.ExtractToDirectory(tempFile, destDir);
+                 using (var archive = ZipFile.OpenRead(tempFile))
+                 {
+                     foreach (var entry in archive.Entries)
+                     {
+                         if (string.IsNullOrEmpty(entry.Name) && entry.FullName.EndsWith("/")) 
+                         {
+                             // Directory
+                             continue;
+                         }
+
+                         var destPath = Path.GetFullPath(Path.Combine(destDirFullPath, entry.FullName));
+                         if (!destPath.StartsWith(destDirFullPath + Path.DirectorySeparatorChar) &&
+                             !destPath.StartsWith(destDirFullPath + Path.AltDirectorySeparatorChar))
+                         {
+                             throw new IOException("Zip slip attempt detected.");
+                         }
+                         
+                         var entryDir = Path.GetDirectoryName(destPath);
+                         if (!Directory.Exists(entryDir)) Directory.CreateDirectory(entryDir!);
+                         
+                         if (!string.IsNullOrEmpty(entry.Name))
+                         {
+                            entry.ExtractToFile(destPath, true);
+                         }
+                     }
+                 }
             }
             else
             {
@@ -183,6 +210,17 @@ public class VersionService
                      {
                          if (!entry.IsDirectory)
                          {
+                             var entryPath = entry.Key;
+                             if (entryPath == null) continue;
+
+                             var destPath = Path.GetFullPath(Path.Combine(destDirFullPath, entryPath));
+
+                             if (!destPath.StartsWith(destDirFullPath + Path.DirectorySeparatorChar) &&
+                                 !destPath.StartsWith(destDirFullPath + Path.AltDirectorySeparatorChar))
+                             {
+                                 throw new IOException("Zip slip attempt detected.");
+                             }
+
                              entry.WriteToDirectory(destDir, new ExtractionOptions { ExtractFullPath = true, Overwrite = true });
                          }
                      }

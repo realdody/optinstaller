@@ -97,11 +97,10 @@ public class OptiScalerService
                 var content = File.ReadAllText(configPath);
                 
                 // If not enabled (AMD/Intel), force false. If enabled (Nvidia), we generally leave as auto or default.
-                // The bat script logic:
-                // if (!enableSpoofing) -> replace 'Dxgi=auto' with 'Dxgi=false'
                 if (!options.EnableSpoofing)
                 {
-                    content = content.Replace("Dxgi=auto", "Dxgi=false");
+                    content = content.Replace("Dxgi=auto", "Dxgi=false")
+                                     .Replace("Dxgi=true", "Dxgi=false");
                 }
                 
                 // If OptiPatcher is used, enable ASI loading

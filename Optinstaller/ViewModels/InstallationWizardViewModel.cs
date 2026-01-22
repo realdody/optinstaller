@@ -168,6 +168,8 @@ public partial class InstallationWizardViewModel : ViewModelBase
     [RelayCommand]
     private async Task Next()
     {
+        if (IsInstalling) return;
+
         if (StepIndex == 0 && ShowEngineWarning)
         {
             // Just acknowledgment
@@ -210,7 +212,17 @@ public partial class InstallationWizardViewModel : ViewModelBase
         
         if (StepIndex == 4) // Install
         {
-             await Install();
+             IsInstalling = true;
+             UpdateState();
+             try
+             {
+                await Install();
+             }
+             finally
+             {
+                IsInstalling = false;
+                UpdateState();
+             }
              return;
         }
 
@@ -278,7 +290,8 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
     private async Task Install()
     {
-        IsInstalling = true;
+        // IsInstalling state managed by caller (Next) or needs to be safe
+        // But Next() sets it. Let's just do the work.
         InstallStatus = "Installing OptiScaler...";
         _options.UseOptiPatcher = UseOptiPatcher;
         _options.CreateUninstaller = CreateUninstaller;
@@ -288,14 +301,11 @@ public partial class InstallationWizardViewModel : ViewModelBase
             await _optiScalerService.InstallAsync(_options);
             InstallSuccess = true;
             InstallStatus = "Installation Complete!";
-            IsInstalling = false;
             StepIndex++; // Go to finish
-            UpdateState();
         }
         catch (Exception ex)
         {
             InstallStatus = $"Error: {ex.Message}";
-            IsInstalling = false;
         }
     }
 }

@@ -111,7 +111,10 @@ public partial class DashboardViewModel : ViewModelBase
 
     private void AddGameInternal(string path)
     {
-        var dirName = System.IO.Path.GetFileName(path);
+        var trimmedPath = path.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+        var dirName = System.IO.Path.GetFileName(trimmedPath);
+        if (string.IsNullOrEmpty(dirName)) dirName = trimmedPath;
+
         var game = new GameInstance
         {
             Name = dirName,
@@ -131,7 +134,13 @@ public partial class DashboardViewModel : ViewModelBase
         // We need to ensure we have versions.
         if (!DownloadedVersions.Any())
         {
-            // TODO: Show error "Please download a version first"
+            var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "No Versions Available",
+                Content = "Please download an OptiScaler version from the Versions tab before installing.",
+                CloseButtonText = "OK"
+            };
+            await errorDialog.ShowAsync();
             return;
         }
 
@@ -157,9 +166,9 @@ public partial class DashboardViewModel : ViewModelBase
         // Refresh game status after wizard closes
         game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename);
         game.InstalledFilename = filename;
-        if (game.IsInstalled)
+        
+        if (game.IsInstalled && wizardVm.InstallSuccess)
         {
-             // We don't track version exactly per game yet, but we could update if we did
              game.CurrentVersion = version.TagName;
         }
     }
