@@ -1,0 +1,66 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Optinstaller.ViewModels"
+             xmlns:models="using:Optinstaller.Models"
+             xmlns:ui="using:FluentAvalonia.UI.Controls"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="Optinstaller.Views.VersionManagerView"
+             x:DataType="vm:VersionManagerViewModel">
+
+    <Grid RowDefinitions="Auto,Auto,*">
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="20" Spacing="10" Orientation="Vertical">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="OptiScaler Versions" Theme="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center"/>
+                <Button Content="Refresh" Command="{Binding LoadVersionsCommand}" Margin="20,0,0,0"/>
+                <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsLoading}" Width="100" Margin="10,0"/>
+            </StackPanel>
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="Red" IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+        </StackPanel>
+
+        <!-- Global Progress -->
+        <ProgressBar Grid.Row="1" Value="{Binding DownloadProgress}" IsVisible="{Binding IsDownloading}" 
+                     Height="2" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
+
+        <!-- Version List -->
+        <ScrollViewer Grid.Row="2" Padding="20">
+            <ItemsControl ItemsSource="{Binding Versions}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="models:OptiScalerVersion">
+                        <Border Margin="0,0,0,10" Padding="15" CornerRadius="8"
+                                Background="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                                BorderThickness="1" BorderBrush="{DynamicResource SurfaceStrokeColorFlyoutBrush}">
+                            <Grid ColumnDefinitions="*, Auto">
+                                <StackPanel Grid.Column="0" Spacing="5">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <TextBlock Text="{Binding TagName}" FontWeight="Bold" FontSize="16"/>
+                                        <Border CornerRadius="4" Padding="6,2" Background="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsDownloaded}">
+                                            <TextBlock Text="Downloaded" FontSize="10" Foreground="White"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding PublishedAt, StringFormat='Published: {0:d}'}" FontSize="12" Opacity="0.6"/>
+                                    <TextBlock Text="{Binding Description}" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12" Opacity="0.8"/>
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <Button Content="Download" 
+                                            Command="{Binding $parent[UserControl].((vm:VersionManagerViewModel)DataContext).DownloadVersionCommand}"
+                                            CommandParameter="{Binding}"
+                                            IsVisible="{Binding !IsDownloaded}"/>
+                                    
+                                    <Button Content="Delete" 
+                                            Command="{Binding $parent[UserControl].((vm:VersionManagerViewModel)DataContext).DeleteVersionCommand}"
+                                            CommandParameter="{Binding}"
+                                            IsVisible="{Binding IsDownloaded}"
+                                            Theme="{DynamicResource DeleteButtonStyle}"/> <!-- Pseudo style, just red usually -->
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

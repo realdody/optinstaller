@@ -1,0 +1,31 @@
+<ui:AppWindow xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Optinstaller.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="using:FluentAvalonia.UI.Windowing"
+        xmlns:uic="using:FluentAvalonia.UI.Controls"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="Optinstaller.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="Optinstaller"
+        WindowStartupLocation="CenterScreen">
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <uic:NavigationView PaneDisplayMode="Left" Header="Optinstaller"
+                        SelectionChanged="NavigationView_SelectionChanged"
+                        Content="{Binding CurrentPage}">
+        <uic:NavigationView.MenuItems>
+            <uic:NavigationViewItem Content="Dashboard" Tag="Dashboard" IconSource="Home" IsSelected="True" />
+            <uic:NavigationViewItem Content="Versions" Tag="Versions" IconSource="Download" />
+            <uic:NavigationViewItem Content="Settings" Tag="Settings" IconSource="Settings" />
+        </uic:NavigationView.MenuItems>
+        
+
+    </uic:NavigationView>
+
+</ui:AppWindow>
