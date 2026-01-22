@@ -24,6 +24,12 @@ public class OptiScalerService
         "d3d12.dll", "wininet.dll", "winhttp.dll", "OptiScaler.asi" 
     };
 
+    /// <summary>
+    /// Determines whether OptiScaler appears installed in the specified game directory.
+    /// </summary>
+    /// <param name="gamePath">Path to the game's root directory to inspect.</param>
+    /// <param name="installedFilename">When a matching OptiScaler file is found, receives that filename; otherwise set to an empty string.</param>
+    /// <returns>`true` if OptiScaler configuration exists and a matching file was identified, `false` otherwise.</returns>
     public bool IsInstalled(string gamePath, out string installedFilename)
     {
         installedFilename = string.Empty;
@@ -56,6 +62,11 @@ public class OptiScalerService
         return false;
     }
 
+    /// <summary>
+    /// Installs OptiScaler into the specified game directory according to the provided options.
+    /// </summary>
+    /// <param name="options">Installation parameters (expects GamePath, VersionPath, TargetFilename and flags: EnableSpoofing, UseOptiPatcher, CreateUninstaller) that control source locations, destination filename, config adjustments, optional OptiPatcher download, and uninstaller creation.</param>
+    /// <exception cref="System.IO.FileNotFoundException">Thrown when OptiScaler.dll is missing from the provided VersionPath.</exception>
     public async Task InstallAsync(InstallationOptions options)
     {
         await Task.Run(async () => 
@@ -153,6 +164,11 @@ public class OptiScalerService
         File.WriteAllText(batPath, sb.ToString());
     }
 
+    /// <summary>
+    /// Determines whether the game's executables match patterns supported by OptiPatcher by downloading and scanning the OptiPatcher source for known executable names.
+    /// </summary>
+    /// <param name="gamePath">Path to the game's installation directory to scan for .exe files.</param>
+    /// <returns>`true` if a matching executable name is found indicating OptiPatcher support, `false` otherwise or if the check cannot be completed.</returns>
     public async Task<bool> CheckOptiPatcherSupportAsync(string gamePath)
     {
         try
@@ -203,6 +219,11 @@ public class OptiScalerService
         }
     }
 
+    /// <summary>
+    /// Removes known OptiScaler files and directories from the specified game installation directory.
+    /// </summary>
+    /// <param name="gamePath">Path to the game's installation directory where OptiScaler artifacts should be removed.</param>
+    /// <param name="installedFilename">The filename of the installed OptiScaler module to remove (relative to <paramref name="gamePath"/>).</param>
     public async Task UninstallAsync(string gamePath, string installedFilename)
     {
         await Task.Run(() =>

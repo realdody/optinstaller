@@ -32,6 +32,10 @@ public class VersionService
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Optinstaller/1.0 (OptiScaler Manager)");
     }
 
+    /// <summary>
+    /// Retrieve available OptiScaler versions by querying GitHub releases and scanning the local Versions directory.
+    /// </summary>
+    /// <returns>A list of available <see cref="OptiScalerVersion"/> objects (including locally installed versions), ordered by PublishedAt descending.</returns>
     public async Task<List<OptiScalerVersion>> GetAvailableVersionsAsync()
     {
         var versions = new List<OptiScalerVersion>();
@@ -114,6 +118,13 @@ public class VersionService
         }
     }
 
+    /// <summary>
+    /// Downloads the archive for the specified OptiScaler version, extracts it into the local Versions directory, and marks the version as downloaded.
+    /// </summary>
+    /// <param name="version">The version metadata that contains the download URL and tag name; the method updates its IsDownloaded and LocalPath on success.</param>
+    /// <param name="progress">Optional progress reporter that receives a percentage value (0 to 100) representing download completion.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the download URL returns a text content type instead of a binary archive.</exception>
+    /// <exception cref="IOException">Thrown when a zip-slip attempt is detected or when file system operations fail during extraction or directory manipulation.</exception>
     public async Task DownloadVersionAsync(OptiScalerVersion version, IProgress<double>? progress = null)
     {
         if (string.IsNullOrEmpty(version.DownloadUrl)) return;
@@ -286,6 +297,10 @@ public class VersionService
         }
     }
 
+    /// <summary>
+    /// Remove the local installation directory for the specified version and reset its download state.
+    /// </summary>
+    /// <param name="version">The version whose local directory (under the Versions folder named by <c>TagName</c>) will be deleted and whose <see cref="OptiScalerVersion.IsDownloaded"/> and <see cref="OptiScalerVersion.LocalPath"/> fields will be reset.</param>
     public void DeleteVersion(OptiScalerVersion version)
     {
         var dir = Path.Combine(_versionsDirectory, version.TagName);

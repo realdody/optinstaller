@@ -18,6 +18,13 @@ public class ConfigurationService
         _configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ConfigFileName);
     }
 
+    /// <summary>
+    /// Loads the application configuration from the configured file into <see cref="CurrentConfig"/> if the file exists.
+    /// </summary>
+    /// <remarks>
+    /// If the file does not exist, <see cref="CurrentConfig"/> is left unchanged. If deserialization fails or any error occurs while reading, <see cref="CurrentConfig"/> is reset to a new <see cref="AppConfig"/> instance.
+    /// </remarks>
+    /// <returns>A <see cref="Task"/> that completes when the load operation has finished.</returns>
     public async Task LoadAsync()
     {
         if (File.Exists(_configPath))
@@ -34,6 +41,13 @@ public class ConfigurationService
         }
     }
 
+    /// <summary>
+    /// Writes the current configuration to the configuration file, creating or overwriting the file at the configured path.
+    /// </summary>
+    /// <remarks>
+    /// Any errors encountered while writing are swallowed; the method completes without throwing on failure.
+    /// </remarks>
+    /// <returns>A Task that completes when the write attempt has finished (successfully or not).</returns>
     public async Task SaveAsync()
     {
         try

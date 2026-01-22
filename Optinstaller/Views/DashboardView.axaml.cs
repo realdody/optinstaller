@@ -7,6 +7,9 @@ namespace Optinstaller.Views;
 
 public partial class DashboardView : UserControl
 {
+    /// <summary>
+    /// Initializes a new instance of <see cref="DashboardView"/>, constructs the control's UI, and registers a Loaded event handler to perform view initialization when the control becomes loaded.
+    /// </summary>
     public DashboardView()
     {
         InitializeComponent();
@@ -22,6 +25,9 @@ public partial class DashboardView : UserControl
         }
     }
 
+    /// <summary>
+    /// Handles the Add Game button click by asking the view model to add a game from the application's top-level storage provider when available.
+    /// </summary>
     private async void AddGame_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is DashboardViewModel vm)

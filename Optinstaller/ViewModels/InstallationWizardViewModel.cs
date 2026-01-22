@@ -69,6 +69,13 @@ public partial class InstallationWizardViewModel : ViewModelBase
         InitializeAsync();
     }
 
+    /// <summary>
+    /// Performs initial environment detection and updates the view-model's state for the wizard.
+    /// </summary>
+    /// <remarks>
+    /// Detects presence of an Engine folder, determines Wine compatibility, runs GPU detection, and updates related observable properties (for example: <see cref="IsCheckingEnvironment"/>, <see cref="ShowEngineWarning"/>, and <see cref="IsWine"/>).
+    /// Exceptions are caught and written to debug output; the method ensures <see cref="IsCheckingEnvironment"/> is cleared on error.
+    /// </remarks>
     private async void InitializeAsync()
     {
         try
@@ -97,6 +104,10 @@ public partial class InstallationWizardViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Detects whether the current process appears to be running under Wine by checking the WINEDLLPATH environment variable.
+    /// </summary>
+    /// <returns>`true` if the process appears to be running under Wine (WINEDLLPATH is set), `false` otherwise.</returns>
     private bool CheckWine()
     {
         // Simple heuristic: Z: drive mapping usually exists in Wine
@@ -155,6 +166,10 @@ public partial class InstallationWizardViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Advance the installation wizard to the next step, performing step-specific validation and actions (filename validation, OptiPatcher compatibility check, and initiating installation when appropriate).
+    /// </summary>
+    /// <returns>A task that completes when the next-step processing and any step-specific asynchronous work finish.</returns>
     [RelayCommand]
     private async Task Next()
     {
@@ -232,6 +247,12 @@ public partial class InstallationWizardViewModel : ViewModelBase
         RequestClose?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// Updates the view model's UI state to reflect the current wizard step and notifies observers of changed properties.
+    /// </summary>
+    /// <remarks>
+    /// Recomputes navigation flags and raises PropertyChanged for step indicators (IsStep0..IsStep5). Updates per-step UI fields such as Title, NextButtonText, and FileExistsWarning, and disables navigation when the wizard is finished or installation is in progress or has succeeded.
+    /// </remarks>
     private void UpdateState()
     {
         CanGoBack = StepIndex > 0 && !IsInstalling && !InstallSuccess;
@@ -271,6 +292,13 @@ public partial class InstallationWizardViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Performs the installation of OptiScaler using the current installation options and updates UI state accordingly.
+    /// </summary>
+    /// <remarks>
+    /// Applies the current UseOptiPatcher and CreateUninstaller settings to the installation options, sets progress/status messages,
+    /// marks <see cref="InstallSuccess"/> on success and advances the wizard step, or updates <see cref="InstallStatus"/> with an error message on failure.
+    /// </remarks>
     private async Task Install()
     {
         InstallStatus = "Installing OptiScaler...";

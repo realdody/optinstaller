@@ -16,6 +16,12 @@ public partial class App : Application
         AvaloniaXamlLoader.Load(this);
     }
 
+    /// <summary>
+    /// Completes framework initialization and configures the desktop main window when running under a classic desktop lifetime.
+    /// </summary>
+    /// <remarks>
+    /// When the application lifetime is an <c>IClassicDesktopStyleApplicationLifetime</c>, this method disables Avalonia's DataAnnotations validation plugin and sets <c>desktop.MainWindow</c> to a new <c>MainWindow</c> whose <c>DataContext</c> is a new <c>MainWindowViewModel</c>. The base implementation is invoked at the end of initialization.
+    /// </remarks>
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -32,6 +38,9 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
+    /// <summary>
+    /// Removes all DataAnnotationsValidationPlugin instances from the global binding validators to disable Avalonia's data-annotation-based validation.
+    /// </summary>
     private void DisableAvaloniaDataAnnotationValidation()
     {
         var dataValidationPluginsToRemove =

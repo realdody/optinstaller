@@ -42,6 +42,12 @@ public partial class DashboardViewModel : ViewModelBase
         "d3d12.dll", "wininet.dll", "winhttp.dll", "OptiScaler.asi"
     };
 
+    /// <summary>
+    /// Initializes a new DashboardViewModel and constructs its required service dependencies.
+    /// </summary>
+    /// <remarks>
+    /// Creates concrete instances of OptiScalerService, VersionService, and ConfigurationService used by the view model.
+    /// </remarks>
     public DashboardViewModel()
     {
         _optiScalerService = new OptiScalerService();
@@ -49,6 +55,9 @@ public partial class DashboardViewModel : ViewModelBase
         _configService = new ConfigurationService();
     }
     
+    /// <summary>
+    /// Initializes the view model's state by loading configuration, refreshing available/downloaded versions, and loading saved games.
+    /// </summary>
     public async Task InitializeAsync()
     {
         await _configService.LoadAsync();
@@ -68,6 +77,9 @@ public partial class DashboardViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Refreshes the DownloadedVersions collection with available versions that are marked as downloaded and sets SelectedVersion to the first downloaded version if any exist.
+    /// </summary>
     private async Task RefreshVersions()
     {
         DownloadedVersions.Clear();
@@ -83,6 +95,13 @@ public partial class DashboardViewModel : ViewModelBase
             SelectedVersion = DownloadedVersions.First();
     }
 
+    /// <summary>
+    /// Prompts the user to select a game directory and registers it in the view model.
+    /// </summary>
+    /// <param name="storageProvider">Storage provider used to open a folder picker for selecting the game directory.</param>
+    /// <remarks>
+    /// If the selected directory is not already present in the Games collection, a new GameInstance is added and the path is persisted to the current configuration.
+    /// </remarks>
     public async Task AddGameFromPath(IStorageProvider storageProvider)
     {
         var result = await storageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
@@ -130,6 +149,11 @@ public partial class DashboardViewModel : ViewModelBase
         Games.Add(game);
     }
 
+    /// <summary>
+    /// Initiates the installation flow for OptiScaler for the specified game, presenting UI to perform the install.
+    /// </summary>
+    /// <param name="game">The target GameInstance to install into. If null, the command does nothing.</param>
+    /// <remarks>If no downloaded versions are available, displays an error dialog and aborts. On completion updates <c>game.IsInstalled</c> and <c>game.InstalledFilename</c>; if the installation succeeded, also sets <c>game.CurrentVersion</c> to the installed version tag.</remarks>
     [RelayCommand]
     private async Task InstallOptiScaler(GameInstance? game)
     {
@@ -173,6 +197,11 @@ public partial class DashboardViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Prompts the user to confirm and, if confirmed, uninstalls OptiScaler from the specified game.
+    /// </summary>
+    /// <param name="game">The game entry to uninstall OptiScaler from. If null or not installed, the method returns without action.</param>
+    /// <returns>A task that completes when the confirmation dialog, uninstall attempt, and any resulting error dialog have finished.</returns>
     [RelayCommand]
     private async Task UninstallOptiScaler(GameInstance? game)
     {

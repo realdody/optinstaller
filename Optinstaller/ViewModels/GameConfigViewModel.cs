@@ -28,6 +28,16 @@ public partial class GameConfigViewModel : ViewModelBase
         LoadConfig();
     }
 
+    /// <summary>
+    /// Loads OptiScaler.ini from the configured path and updates the view model's properties to match its settings.
+    /// </summary>
+    /// <remarks>
+    /// If the config file does not exist, the method returns without modifying properties. Recognized settings:
+    /// - "Dxgi": treated as disabled when its value is "false"; otherwise spoofing is enabled.
+    /// - "OverlayMenu": interpreted as "true"/"false" for overlay state.
+    /// - "Upscaler": mapped to UpscalerIndex ("dlss"=1, "fsr2"=2, "xess"=3, "fsr3"=4, anything else=0).
+    /// - "RenderScale" and "Sharpness": parsed as floats when possible and assigned to the corresponding properties.
+    /// </remarks>
     private void LoadConfig()
     {
         if (!File.Exists(_configPath)) return;
@@ -71,6 +81,14 @@ public partial class GameConfigViewModel : ViewModelBase
         return set.Equals(value, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Persist the view-model's current settings to the OptiScaler.ini file and request the view to close.
+    /// </summary>
+    /// <remarks>
+    /// If the configuration file exists, updates the following INI entries from the view-model state:
+    /// Dxgi, OverlayMenu, Upscaler, RenderScale, and Sharpness; then writes the file and raises RequestClose.
+    /// If the file does not exist, no changes are made.
+    /// </remarks>
     [RelayCommand]
     private void Save()
     {
@@ -123,6 +141,10 @@ public partial class GameConfigViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Opens the OptiScaler.ini file at the configured path using the system's default application.
+    /// Any errors encountered while attempting to start the process are silently ignored.
+    /// </summary>
     [RelayCommand]
     private void OpenFile()
     {
