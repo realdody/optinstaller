@@ -1,0 +1,40 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Optinstaller.ViewModels"
+             x:Class="Optinstaller.Views.GameConfigView"
+             x:DataType="vm:GameConfigViewModel"
+             Width="400">
+
+    <StackPanel Spacing="20" Margin="20">
+        <TextBlock Text="Configure OptiScaler" FontWeight="Bold" FontSize="18"/>
+
+        <!-- Spoofing -->
+        <CheckBox Content="Enable DLSS Spoofing" IsChecked="{Binding EnableSpoofing}"
+                  ToolTip.Tip="Required for DLSS-FG. Set to false for FSR/XeSS native."/>
+
+        <!-- Overlay -->
+        <CheckBox Content="Enable Overlay Menu" IsChecked="{Binding EnableOverlay}"
+                  ToolTip.Tip="Show OptiScaler menu (Insert key)"/>
+
+        <!-- Upscaler -->
+        <StackPanel Spacing="5">
+            <TextBlock Text="Backend Upscaler"/>
+            <ComboBox ItemsSource="{Binding Upscalers}" SelectedIndex="{Binding UpscalerIndex}" HorizontalAlignment="Stretch"/>
+        </StackPanel>
+
+        <!-- Sharpness -->
+        <StackPanel Spacing="5">
+            <TextBlock Text="{Binding Sharpness, StringFormat='Sharpness: {0:0.0}'}"/>
+            <Slider Minimum="0.0" Maximum="1.0" TickFrequency="0.1" Value="{Binding Sharpness}"/>
+        </StackPanel>
+
+        <Separator/>
+
+        <!-- Actions -->
+        <Button Content="Open Config File" Command="{Binding OpenFileCommand}" HorizontalAlignment="Stretch"/>
+        
+        <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" Margin="0,10,0,0">
+             <Button Content="Save &amp; Close" Command="{Binding SaveCommand}" Classes="accent"/>
+        </StackPanel>
+    </StackPanel>
+</UserControl>
