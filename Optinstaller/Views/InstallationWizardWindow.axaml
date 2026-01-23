@@ -1,0 +1,232 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:Optinstaller.ViewModels"
+        xmlns:ui="using:FluentAvalonia.UI.Controls"
+        mc:Ignorable="d" d:DesignWidth="850" d:DesignHeight="550"
+        x:Class="Optinstaller.Views.InstallationWizardWindow"
+        x:DataType="vm:InstallationWizardViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="OptiScaler Installer"
+        Width="850" Height="550"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        ExtendClientAreaToDecorationsHint="False"
+        SystemDecorations="Full">
+
+    <Grid ColumnDefinitions="240,*">
+        
+        <!-- Sidebar -->
+        <Border Grid.Column="0" Background="{DynamicResource SurfaceStrokeColorDefaultBrush}" BorderThickness="0,0,1,0" BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}">
+            <StackPanel Spacing="15" Margin="20,40,20,20">
+                <TextBlock Text="INSTALLATION STEPS" FontSize="10" FontWeight="Bold" Opacity="0.5" Margin="0,0,0,10"/>
+                
+                <!-- Steps List -->
+                
+                <Grid ColumnDefinitions="20,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+                    <!-- Step 1 -->
+                    <!-- We can just use a simple list for now, manually created -->
+                </Grid>
+                
+                <!-- Manual Sidebar List -->
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsStep0}"/>
+                    <Ellipse Width="8" Height="8" Fill="Transparent" IsVisible="{Binding !IsStep0}"/>
+                    <TextBlock Text="Welcome" VerticalAlignment="Center" />
+                </StackPanel>
+                
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsStep1}"/>
+                    <Ellipse Width="8" Height="8" Fill="Transparent" IsVisible="{Binding !IsStep1}"/>
+                    <TextBlock Text="Select Version" VerticalAlignment="Center"/>
+                </StackPanel>
+                
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsStep2}"/>
+                    <Ellipse Width="8" Height="8" Fill="Transparent" IsVisible="{Binding !IsStep2}"/>
+                    <TextBlock Text="Select Filename" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsStep3}"/>
+                    <Ellipse Width="8" Height="8" Fill="Transparent" IsVisible="{Binding !IsStep3}"/>
+                    <TextBlock Text="Configuration" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding !IsNvidia}">
+                    <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsStep4}"/>
+                    <Ellipse Width="8" Height="8" Fill="Transparent" IsVisible="{Binding !IsStep4}"/>
+                    <TextBlock Text="OptiPatcher" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsStep5}"/>
+                    <Ellipse Width="8" Height="8" Fill="Transparent" IsVisible="{Binding !IsStep5}"/>
+                    <TextBlock Text="Ready to Install" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                 <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsStep6}"/>
+                    <Ellipse Width="8" Height="8" Fill="Transparent" IsVisible="{Binding !IsStep6}"/>
+                    <TextBlock Text="Finish" VerticalAlignment="Center"/>
+                </StackPanel>
+                
+            </StackPanel>
+        </Border>
+
+        <!-- Main Content -->
+        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="30">
+            
+            <!-- Header -->
+            <TextBlock Grid.Row="0" Text="{Binding Title}" FontSize="28" FontWeight="Light" Margin="0,0,0,30"/>
+            
+            <!-- Content Area -->
+            <Panel Grid.Row="1">
+                 <!-- Step 0: Welcome -->
+                <StackPanel IsVisible="{Binding IsStep0}" Spacing="20">
+                     <TextBlock Text="Welcome to the OptiScaler Installer" FontSize="18" FontWeight="SemiBold"/>
+                     <TextBlock Text="This wizard will help you configure and install OptiScaler for your game." TextWrapping="Wrap" Opacity="0.8"/>
+                     
+                     <ui:InfoBar Title="Engine Folder Detected" 
+                              Message="If this is an Unreal Engine game, you likely need to install OptiScaler in: Binaries\Win64"
+                              Severity="Warning"
+                              IsOpen="{Binding ShowEngineWarning}"
+                              IsClosable="False" />
+                </StackPanel>
+
+                <!-- Step 1: Version Selection -->
+                <StackPanel IsVisible="{Binding IsStep1}" Spacing="20">
+                    <TextBlock Text="Which version would you like to install?" FontSize="18" FontWeight="SemiBold"/>
+                    
+                    <StackPanel Spacing="10">
+                        <Label Content="Available Versions"/>
+                        <ComboBox ItemsSource="{Binding AvailableVersions}" SelectedItem="{Binding SelectedVersion}" HorizontalAlignment="Stretch">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <TextBlock Text="{Binding TagName}" FontWeight="Bold"/>
+                                        <TextBlock Text="{Binding PublishedAt, StringFormat='{}{0:d}'}" Opacity="0.6"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Step 2: Filename -->
+                <StackPanel IsVisible="{Binding IsStep2}" Spacing="20">
+                    <TextBlock Text="Select the target filename" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="The filename determines how the game loads OptiScaler. 'dxgi.dll' is the most common." TextWrapping="Wrap" Opacity="0.8"/>
+                    
+                    <ComboBox ItemsSource="{Binding Filenames}" SelectedItem="{Binding SelectedFilename}" HorizontalAlignment="Stretch"/>
+                    
+                    <ui:InfoBar Title="File Exists" 
+                             Message="A file with this name already exists. Click Next again to overwrite it."
+                             Severity="Error"
+                             IsOpen="{Binding FileExistsWarning}"
+                             IsClosable="False"/>
+                </StackPanel>
+
+                <!-- Step 3: GPU / Spoofing -->
+                <StackPanel IsVisible="{Binding IsStep3}" Spacing="20">
+                    <TextBlock Text="Configuration" FontSize="18" FontWeight="SemiBold"/>
+                    
+                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}" CornerRadius="4" Padding="15">
+                        <StackPanel Spacing="5">
+                             <TextBlock Text="Detected Environment" FontSize="12" Opacity="0.6"/>
+                             <TextBlock Text="{Binding GpuName}" FontWeight="Bold" FontSize="16"/>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Spacing="10">
+                        <CheckBox Content="Enable DXGI Spoofing" IsChecked="{Binding EnableSpoofing}"/>
+                        <TextBlock Text="Allows FSR/XeSS to replace DLSS. Required for Frame Gen on unsupported cards." 
+                                   FontSize="12" Opacity="0.7" Margin="30,0,0,0" TextWrapping="Wrap"/>
+                        
+                        <ui:InfoBar Message="DXGI Spoofing may cause visual artifacts or performance drops (mainly in Unreal Engine games). Only enable if specifically required."
+                                 Severity="Warning"
+                                 IsOpen="True"
+                                 IsClosable="False"/>
+                                 
+                        <TextBlock Text="Note: On Nvidia GPUs, this setting is usually auto-managed." 
+                                   IsVisible="{Binding IsNvidia}" FontSize="12" Foreground="{DynamicResource SystemAccentColor}" Margin="30,0,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Step 4: OptiPatcher -->
+                <StackPanel IsVisible="{Binding IsStep4}" Spacing="20">
+                    <TextBlock Text="OptiPatcher Compatibility" FontSize="18" FontWeight="SemiBold"/>
+                    
+                    <StackPanel Spacing="10" IsVisible="{Binding CheckingOptiPatcher}">
+                        <ProgressBar IsIndeterminate="True"/>
+                        <TextBlock Text="Checking GitHub for compatibility..." HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <StackPanel IsVisible="{Binding !CheckingOptiPatcher}" Spacing="15">
+                        <ui:InfoBar Title="Status" Message="{Binding OptiPatcherStatus}" IsOpen="True" IsClosable="False" 
+                                 Severity="{Binding OptiPatcherSupported, Converter={x:Static ObjectConverters.IsNull}}"/> <!-- Simplification -->
+                        
+                        <StackPanel IsVisible="{Binding OptiPatcherSupported}">
+                            <CheckBox Content="Download &amp; Install OptiPatcher.asi" IsChecked="{Binding UseOptiPatcher}"/>
+                            <TextBlock Text="Patches game checks to allow upscalers to work." FontSize="12" Opacity="0.6" Margin="30,0,0,0"/>
+                        </StackPanel>
+
+                        <StackPanel IsVisible="{Binding !OptiPatcherSupported}">
+                             <Button Content="Force Install OptiPatcher (Advanced)" 
+                                     Command="{Binding ForceOptiPatcherCommand}"
+                                     HorizontalAlignment="Left"
+                                     Margin="0,10,0,0"/>
+                             <TextBlock Text="Use this if you know the game needs OptiPatcher but it wasn't detected." 
+                                        FontSize="11" Opacity="0.6" Margin="0,5,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Step 5: Summary -->
+                <StackPanel IsVisible="{Binding IsStep5}" Spacing="20">
+                    <TextBlock Text="Ready to Install" FontSize="18" FontWeight="SemiBold"/>
+                    
+                    <Border Background="{DynamicResource ControlFillColorSecondaryBrush}" CornerRadius="8" Padding="20">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Summary:" FontWeight="Bold"/>
+                            <TextBlock Text="{Binding SelectedVersion.TagName, StringFormat='Version: {0}'}"/>
+                            <TextBlock Text="{Binding SelectedFilename, StringFormat='File: {0}'}"/>
+                            <TextBlock Text="{Binding EnableSpoofing, StringFormat='Spoofing: {0}'}"/>
+                            <TextBlock Text="{Binding UseOptiPatcher, StringFormat='OptiPatcher: {0}'}"/>
+                        </StackPanel>
+                    </Border>
+                    
+                    <CheckBox Content="Create uninstaller script (Remove OptiScaler.bat)" IsChecked="{Binding CreateUninstaller}"/>
+                </StackPanel>
+
+                <!-- Step 6: Finish -->
+                <StackPanel IsVisible="{Binding IsStep6}" Spacing="20" VerticalAlignment="Center">
+                    <StackPanel IsVisible="{Binding IsInstalling}" Spacing="20">
+                        <TextBlock Text="Installing..." HorizontalAlignment="Center" FontSize="20"/>
+                        <ProgressBar IsIndeterminate="True" Width="300" Height="10"/>
+                        <TextBlock Text="{Binding InstallStatus}" HorizontalAlignment="Center" Opacity="0.7"/>
+                    </StackPanel>
+                    
+                    <StackPanel IsVisible="{Binding InstallSuccess}" Spacing="20">
+                        <ui:SymbolIcon Symbol="Checkmark" Width="64" Height="64" Foreground="Green" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Installation Complete!" HorizontalAlignment="Center" FontSize="24" FontWeight="Bold"/>
+                        <TextBlock Text="OptiScaler has been successfully installed." HorizontalAlignment="Center" Opacity="0.8"/>
+                    </StackPanel>
+                </StackPanel>
+            </Panel>
+
+            <!-- Footer -->
+            <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto" Margin="0,20,0,0">
+                <Button Content="Back" Command="{Binding BackCommand}" IsVisible="{Binding CanGoBack}" Width="100"/>
+                
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10">
+                    <Button Content="Cancel" Command="{Binding CloseCommand}" IsVisible="{Binding !InstallSuccess}" Width="100"/>
+                    <Button Content="{Binding NextButtonText}" Command="{Binding NextCommand}" 
+                            Classes="accent" IsVisible="{Binding !InstallSuccess}" IsEnabled="{Binding !IsInstalling}" Width="100"/>
+                    <Button Content="Finish" Command="{Binding CloseCommand}" IsVisible="{Binding InstallSuccess}" Classes="accent" Width="100"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>
