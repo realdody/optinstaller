@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using FluentAvalonia.UI.Controls;
 using Optinstaller.Models;
 using Optinstaller.Services;
 
@@ -24,6 +26,9 @@ public partial class InstallationWizardViewModel : ViewModelBase
     [ObservableProperty] private bool _showEngineWarning;
     [ObservableProperty] private bool _isCheckingEnvironment;
     
+    [ObservableProperty] private ObservableCollection<OptiScalerVersion> _availableVersions;
+    [ObservableProperty] private OptiScalerVersion? _selectedVersion;
+
     [ObservableProperty] private string _selectedFilename = "dxgi.dll";
     [ObservableProperty] private bool _fileExistsWarning;
     
@@ -33,14 +38,20 @@ public partial class InstallationWizardViewModel : ViewModelBase
     [ObservableProperty] private string _gpuName = "Detecting...";
     
     [ObservableProperty] private bool _checkingOptiPatcher;
-    [ObservableProperty] private bool _optiPatcherSupported;
+    [ObservableProperty] 
+    [NotifyPropertyChangedFor(nameof(OptiPatcherSeverity))]
+    private bool _optiPatcherSupported;
     [ObservableProperty] private bool _useOptiPatcher;
     [ObservableProperty] private string _optiPatcherStatus = "Checking compatibility...";
+    
+    public InfoBarSeverity OptiPatcherSeverity => OptiPatcherSupported ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
     
     [ObservableProperty] private bool _createUninstaller = true;
     [ObservableProperty] private bool _isInstalling;
     [ObservableProperty] private string _installStatus = "";
     [ObservableProperty] private bool _installSuccess;
+
+    public InstallationOptions Options => _options;
 
     public List<string> Filenames => new()
     {
@@ -54,16 +65,22 @@ public partial class InstallationWizardViewModel : ViewModelBase
     public bool IsStep3 => StepIndex == 3;
     public bool IsStep4 => StepIndex == 4;
     public bool IsStep5 => StepIndex == 5;
+    public bool IsStep6 => StepIndex == 6;
 
     public event EventHandler? RequestClose;
 
-    public InstallationWizardViewModel(GameInstance game, OptiScalerVersion version)
+    public InstallationWizardViewModel(GameInstance game, IEnumerable<OptiScalerVersion> availableVersions, OptiScalerVersion? defaultVersion = null)
     {
+        if (availableVersions == null) throw new ArgumentNullException(nameof(availableVersions));
+
         _optiScalerService = new OptiScalerService();
+        _availableVersions = new ObservableCollection<OptiScalerVersion>(availableVersions);
+        _selectedVersion = defaultVersion ?? _availableVersions.FirstOrDefault();
+        
         _options = new InstallationOptions
         {
             GamePath = game.GamePath,
-            VersionPath = version.LocalPath
+            VersionPath = _selectedVersion?.LocalPath ?? string.Empty
         };
 
         InitializeAsync();
@@ -166,6 +183,12 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
         if (StepIndex == 1)
         {
+            if (SelectedVersion == null) return;
+            _options.VersionPath = SelectedVersion.LocalPath;
+        }
+
+        if (StepIndex == 2)
+        {
             var path = Path.Combine(_options.GamePath, SelectedFilename);
             if (File.Exists(path) && !FileExistsWarning)
             {
@@ -175,10 +198,19 @@ public partial class InstallationWizardViewModel : ViewModelBase
             _options.TargetFilename = SelectedFilename;
         }
 
-        if (StepIndex == 2)
+        if (StepIndex == 3)
         {
             _options.EnableSpoofing = EnableSpoofing;
             
+            if (IsNvidia)
+            {
+                 // Skip OptiPatcher on Nvidia
+                 StepIndex++;
+                 StepIndex++;
+                 UpdateState();
+                 return;
+            }
+
             CheckingOptiPatcher = true;
             OptiPatcherStatus = "Checking GitHub for compatibility...";
             var supported = await _optiScalerService.CheckOptiPatcherSupportAsync(_options.GamePath);
@@ -196,7 +228,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
             }
         }
         
-        if (StepIndex == 4)
+        if (StepIndex == 5)
         {
              IsInstalling = true;
              UpdateState();
@@ -222,6 +254,10 @@ public partial class InstallationWizardViewModel : ViewModelBase
         if (StepIndex > 0)
         {
             StepIndex--;
+            if (StepIndex == 4 && IsNvidia)
+            {
+                StepIndex--;
+            }
             UpdateState();
         }
     }
@@ -230,6 +266,14 @@ public partial class InstallationWizardViewModel : ViewModelBase
     private void Close()
     {
         RequestClose?.Invoke(this, EventArgs.Empty);
+    }
+
+    [RelayCommand]
+    private void ForceOptiPatcher()
+    {
+        OptiPatcherSupported = true;
+        UseOptiPatcher = true;
+        OptiPatcherStatus = "Force installed enabled by user.";
     }
 
     private void UpdateState()
@@ -242,6 +286,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsStep3));
         OnPropertyChanged(nameof(IsStep4));
         OnPropertyChanged(nameof(IsStep5));
+        OnPropertyChanged(nameof(IsStep6));
         
         switch (StepIndex)
         {
@@ -249,21 +294,24 @@ public partial class InstallationWizardViewModel : ViewModelBase
                 Title = "Welcome"; 
                 NextButtonText = "Next";
                 break;
-            case 1: 
+            case 1:
+                Title = "Select Version";
+                break;
+            case 2: 
                 Title = "Select Filename"; 
                 FileExistsWarning = false;
                 break;
-            case 2: 
+            case 3: 
                 Title = "Configuration"; 
                 break;
-            case 3: 
+            case 4: 
                 Title = "OptiPatcher"; 
                 break;
-            case 4: 
+            case 5: 
                 Title = "Ready to Install"; 
                 NextButtonText = "Install";
                 break;
-            case 5:
+            case 6:
                 Title = "Finished";
                 CanGoBack = false;
                 CanGoNext = false;

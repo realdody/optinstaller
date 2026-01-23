@@ -16,7 +16,11 @@ namespace Optinstaller.Services;
 
 public class VersionService
 {
-    private const string GitHubApiUrl = "https://api.github.com/repos/OptiScaler/OptiScaler/releases";
+    private readonly string[] _gitHubApiUrls = 
+    {
+        "https://api.github.com/repos/OptiScaler/OptiScaler/releases",
+        "https://api.github.com/repos/realdody/OptiScaler-Bleeding-Edge/releases"
+    };
     private readonly string _versionsDirectory;
     private readonly HttpClient _httpClient;
 
@@ -38,35 +42,45 @@ public class VersionService
 
         try
         {
-            var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(GitHubApiUrl);
-            if (releases != null)
+            foreach (var url in _gitHubApiUrls)
             {
-                foreach (var release in releases)
+                try
                 {
-                    var asset = release.Assets?.FirstOrDefault(a => 
-                        a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || 
-                        a.Name.EndsWith(".7z", StringComparison.OrdinalIgnoreCase));
-                    
-                    if (asset == null) continue;
-
-                    var version = new OptiScalerVersion
+                    var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(url);
+                    if (releases != null)
                     {
-                        Name = release.Name ?? release.TagName,
-                        TagName = release.TagName,
-                        Description = release.Description,
-                        PublishedAt = release.PublishedAt,
-                        DownloadUrl = asset.BrowserDownloadUrl,
-                        FileSize = asset.Size
-                    };
+                        foreach (var release in releases)
+                        {
+                            var asset = release.Assets?.FirstOrDefault(a => 
+                                a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || 
+                                a.Name.EndsWith(".7z", StringComparison.OrdinalIgnoreCase));
+                            
+                            if (asset == null) continue;
 
-                    CheckLocalStatus(version);
-                    versions.Add(version);
+                            var version = new OptiScalerVersion
+                            {
+                                Name = release.Name ?? release.TagName,
+                                TagName = release.TagName,
+                                Description = release.Description,
+                                PublishedAt = release.PublishedAt,
+                                DownloadUrl = asset.BrowserDownloadUrl,
+                                FileSize = asset.Size
+                            };
+
+                            CheckLocalStatus(version);
+                            versions.Add(version);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error fetching releases from {url}: {ex.Message}");
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error fetching releases: {ex.Message}");
+            Console.WriteLine($"Error in version fetching process: {ex.Message}");
         }
 
         // 2. Scan local Versions directory for folders that might not be in the GitHub list (or if offline)
