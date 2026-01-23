@@ -255,7 +255,11 @@ public partial class DashboardViewModel : ViewModelBase
     private async Task UninstallOptiScaler(GameInstance? game)
     {
         if (game == null || !game.IsInstalled) return;
+        await PerformUninstall(game);
+    }
 
+    private async Task<bool> PerformUninstall(GameInstance game)
+    {
         var dialog = new FluentAvalonia.UI.Controls.ContentDialog
         {
             Title = "Confirm Uninstall",
@@ -265,7 +269,7 @@ public partial class DashboardViewModel : ViewModelBase
         };
 
         if (await dialog.ShowAsync() != FluentAvalonia.UI.Controls.ContentDialogResult.Primary)
-            return;
+            return false;
 
         try
         {
@@ -274,6 +278,7 @@ public partial class DashboardViewModel : ViewModelBase
             game.IsInstalled = false;
             game.InstalledFilename = string.Empty;
             game.CurrentVersion = "Not Installed";
+            return true;
         }
         catch (Exception ex)
         {
@@ -284,8 +289,10 @@ public partial class DashboardViewModel : ViewModelBase
                 CloseButtonText = "OK"
             };
             await errorDialog.ShowAsync();
+            return false;
         }
     }
+
     [RelayCommand]
     private async Task ConfigureGame(GameInstance? game)
     {
@@ -311,6 +318,12 @@ public partial class DashboardViewModel : ViewModelBase
     {
         if (game == null) return;
         
+        if (game.IsInstalled)
+        {
+            var uninstalled = await PerformUninstall(game);
+            if (!uninstalled) return;
+        }
+
         var path = game.GamePath;
         Games.Remove(game);
         
