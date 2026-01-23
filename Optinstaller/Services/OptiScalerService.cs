@@ -64,15 +64,8 @@ public class OptiScalerService
             var versionPath = options.VersionPath;
             var targetFilename = options.TargetFilename;
 
-            var sourceDll = Path.Combine(versionPath, "OptiScaler.dll");
-            
-            if (!File.Exists(sourceDll))
-                throw new FileNotFoundException($"OptiScaler.dll not found in {versionPath}.");
-
-            var dest = Path.Combine(gamePath, targetFilename);
-
-            if (File.Exists(dest)) File.Delete(dest);
-            File.Copy(sourceDll, dest, true);
+            // Use the shared method to copy the DLL
+            UpdateDll(gamePath, versionPath, targetFilename);
 
             var configPath = Path.Combine(gamePath, OptiScalerIniName);
             var sourceConfig = Path.Combine(versionPath, OptiScalerIniName);
@@ -120,6 +113,19 @@ public class OptiScalerService
                  CreateUninstallerBat(gamePath, targetFilename);
             }
         });
+    }
+
+    public void UpdateDll(string gamePath, string versionPath, string targetFilename)
+    {
+        var sourceDll = Path.Combine(versionPath, "OptiScaler.dll");
+        
+        if (!File.Exists(sourceDll))
+            throw new FileNotFoundException($"OptiScaler.dll not found in {versionPath}.");
+
+        var dest = Path.Combine(gamePath, targetFilename);
+
+        if (File.Exists(dest)) File.Delete(dest);
+        File.Copy(sourceDll, dest, true);
     }
 
     private void CreateUninstallerBat(string gamePath, string filename)

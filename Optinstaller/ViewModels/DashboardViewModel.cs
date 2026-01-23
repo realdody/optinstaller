@@ -174,6 +174,84 @@ public partial class DashboardViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task UpdateOptiScaler(GameInstance? game)
+    {
+        if (game == null || !game.IsInstalled) return;
+
+        if (!DownloadedVersions.Any())
+        {
+            var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "No Versions Available",
+                Content = "Please download an OptiScaler version from the Versions tab before updating.",
+                CloseButtonText = "OK"
+            };
+            await errorDialog.ShowAsync();
+            return;
+        }
+
+        // Show a dialog to select the version
+        var comboBox = new ComboBox
+        {
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            DisplayMemberBinding = new Avalonia.Data.Binding("TagName"),
+            ItemsSource = DownloadedVersions,
+            SelectedItem = SelectedVersion ?? DownloadedVersions.First()
+        };
+
+        var dialog = new FluentAvalonia.UI.Controls.ContentDialog
+        {
+            Title = "Select Version to Install",
+            PrimaryButtonText = "Update",
+            CloseButtonText = "Cancel",
+            Content = new StackPanel
+            {
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock { Text = "Choose the version to update to:" },
+                    comboBox
+                }
+            }
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != FluentAvalonia.UI.Controls.ContentDialogResult.Primary) return;
+
+        var selectedVersion = comboBox.SelectedItem as OptiScalerVersion;
+        if (selectedVersion == null) return;
+
+        try
+        {
+            // Use UpdateDll to replace the file without touching config
+            await Task.Run(() => 
+            {
+                 _optiScalerService.UpdateDll(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
+            });
+
+            game.CurrentVersion = selectedVersion.TagName;
+            
+            var successDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "Update Complete",
+                Content = $"OptiScaler updated to {selectedVersion.TagName}.",
+                CloseButtonText = "OK"
+            };
+            await successDialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+             var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "Update Error",
+                Content = $"Failed to update: {ex.Message}",
+                CloseButtonText = "OK"
+            };
+            await errorDialog.ShowAsync();
+        }
+    }
+
+    [RelayCommand]
     private async Task UninstallOptiScaler(GameInstance? game)
     {
         if (game == null || !game.IsInstalled) return;
