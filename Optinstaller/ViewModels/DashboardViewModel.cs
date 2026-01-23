@@ -186,6 +186,17 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         {
              await window.ShowDialog(desktop.MainWindow);
         }
+        else
+        {
+             var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "Error Launching Wizard",
+                Content = "Could not find the main window to attach the wizard to.",
+                CloseButtonText = "OK"
+            };
+            await errorDialog.ShowAsync();
+            return;
+        }
 
         game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename, out var detectedVersion);
         game.InstalledFilename = filename;

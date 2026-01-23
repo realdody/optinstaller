@@ -24,11 +24,6 @@
                 
                 <!-- Steps List -->
                 
-                <Grid ColumnDefinitions="20,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
-                    <!-- Step 1 -->
-                    <!-- We can just use a simple list for now, manually created -->
-                </Grid>
-                
                 <!-- Manual Sidebar List -->
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsStep0}"/>
