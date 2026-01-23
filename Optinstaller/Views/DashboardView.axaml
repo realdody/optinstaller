@@ -78,7 +78,8 @@
                                                 CommandParameter="{Binding}"
                                                 ToolTip.Tip="Click to update version"
                                                 Background="{DynamicResource AccentFillColorDefaultBrush}"
-                                                BorderThickness="0">
+                                                BorderThickness="0"
+                                                AutomationProperties.Name="Update version">
                                             <StackPanel Orientation="Horizontal" Spacing="4">
                                                 <ui:SymbolIcon Symbol="Sync" FontSize="10" Foreground="White"/>
                                                 <TextBlock Text="{Binding CurrentVersion}" FontSize="10" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
