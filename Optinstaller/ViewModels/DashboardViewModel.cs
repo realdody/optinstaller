@@ -201,7 +201,7 @@ public partial class DashboardViewModel : ViewModelBase
 
         var dialog = new FluentAvalonia.UI.Controls.ContentDialog
         {
-            Title = "Select Version to Install",
+            Title = "Select Version to Update",
             PrimaryButtonText = "Update",
             CloseButtonText = "Cancel",
             Content = new StackPanel

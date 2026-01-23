@@ -52,7 +52,8 @@
                                             Command="{Binding $parent[UserControl].((vm:DashboardViewModel)DataContext).RemoveGameCommand}"
                                             CommandParameter="{Binding}"
                                             Theme="{DynamicResource TransparentButtonTheme}"
-                                            Padding="4" ToolTip.Tip="Remove from Library">
+                                            Padding="4" ToolTip.Tip="Remove from Library"
+                                            AutomationProperties.Name="Remove from Library">
                                         <ui:SymbolIcon Symbol="Dismiss" FontSize="14"/>
                                     </Button>
 

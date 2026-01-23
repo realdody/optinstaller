@@ -96,7 +96,7 @@ public class VersionService
 
         return versions
             .GroupBy(v => v.TagName, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
+            .Select(g => g.OrderByDescending(v => v.IsDownloaded || !string.IsNullOrEmpty(v.LocalPath)).ThenByDescending(v => v.PublishedAt).First())
             .OrderByDescending(v => v.PublishedAt)
             .ToList();
     }
