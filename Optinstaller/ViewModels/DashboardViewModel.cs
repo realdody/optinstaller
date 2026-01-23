@@ -55,7 +55,19 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
     
     public void Receive(VersionsChangedMessage message)
     {
-        _ = RefreshVersions();
+        SafeFireAndForget(RefreshVersions());
+    }
+
+    private async void SafeFireAndForget(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error in background task: {ex}");
+        }
     }
     
     public async Task InitializeAsync()

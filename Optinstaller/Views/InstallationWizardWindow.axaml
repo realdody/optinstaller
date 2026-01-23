@@ -165,7 +165,7 @@
 
                     <StackPanel IsVisible="{Binding !CheckingOptiPatcher}" Spacing="15">
                         <ui:InfoBar Title="Status" Message="{Binding OptiPatcherStatus}" IsOpen="True" IsClosable="False" 
-                                 Severity="{Binding OptiPatcherSupported, Converter={x:Static ObjectConverters.IsNull}}"/> <!-- Simplification -->
+                                 Severity="{Binding OptiPatcherSeverity}"/>
                         
                         <StackPanel IsVisible="{Binding OptiPatcherSupported}">
                             <CheckBox Content="Download &amp; Install OptiPatcher.asi" IsChecked="{Binding UseOptiPatcher}"/>

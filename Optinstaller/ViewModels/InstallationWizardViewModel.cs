@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using FluentAvalonia.UI.Controls;
 using Optinstaller.Models;
 using Optinstaller.Services;
 
@@ -37,9 +38,13 @@ public partial class InstallationWizardViewModel : ViewModelBase
     [ObservableProperty] private string _gpuName = "Detecting...";
     
     [ObservableProperty] private bool _checkingOptiPatcher;
-    [ObservableProperty] private bool _optiPatcherSupported;
+    [ObservableProperty] 
+    [NotifyPropertyChangedFor(nameof(OptiPatcherSeverity))]
+    private bool _optiPatcherSupported;
     [ObservableProperty] private bool _useOptiPatcher;
     [ObservableProperty] private string _optiPatcherStatus = "Checking compatibility...";
+    
+    public InfoBarSeverity OptiPatcherSeverity => OptiPatcherSupported ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
     
     [ObservableProperty] private bool _createUninstaller = true;
     [ObservableProperty] private bool _isInstalling;
@@ -66,6 +71,8 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
     public InstallationWizardViewModel(GameInstance game, IEnumerable<OptiScalerVersion> availableVersions, OptiScalerVersion? defaultVersion = null)
     {
+        if (availableVersions == null) throw new ArgumentNullException(nameof(availableVersions));
+
         _optiScalerService = new OptiScalerService();
         _availableVersions = new ObservableCollection<OptiScalerVersion>(availableVersions);
         _selectedVersion = defaultVersion ?? _availableVersions.FirstOrDefault();
