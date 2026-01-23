@@ -155,8 +155,10 @@ public class OptiScalerService
 
         var dest = Path.Combine(gamePath, targetFilename);
 
-        if (File.Exists(dest)) File.Delete(dest);
-        File.Copy(sourceDll, dest, true);
+        // Atomic replace: copy to temp file first, then move/overwrite
+        var tempDest = dest + ".tmp";
+        File.Copy(sourceDll, tempDest, true);
+        File.Move(tempDest, dest, true);
     }
 
     private void CreateUninstallerBat(string gamePath, string filename)

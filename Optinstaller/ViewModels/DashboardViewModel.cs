@@ -174,6 +174,11 @@ public partial class DashboardViewModel : ViewModelBase
         {
              game.CurrentVersion = detectedVersion;
         }
+        else
+        {
+             game.CurrentVersion = "Not Installed";
+             game.InstalledFilename = string.Empty;
+        }
     }
 
     [RelayCommand]
