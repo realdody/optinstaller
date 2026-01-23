@@ -57,17 +57,44 @@
                                         <ui:SymbolIcon Symbol="Dismiss" FontSize="14"/>
                                     </Button>
 
-                                    <!-- Status Badge (Bottom Left of Hero) -->
-                                    <Border IsVisible="{Binding IsInstalled}"
-                                            VerticalAlignment="Bottom" HorizontalAlignment="Left"
-                                            Margin="10" CornerRadius="4" Padding="8,4"
-                                            Background="{DynamicResource SystemFillColorSuccessBrush}"
-                                            BoxShadow="0 2 4 0 #40000000">
-                                        <StackPanel Orientation="Horizontal" Spacing="4">
-                                            <ui:SymbolIcon Symbol="Checkmark" FontSize="10" Foreground="White"/>
-                                            <TextBlock Text="INSTALLED" FontSize="10" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                    </Border>
+                                    <!-- Status Badges (Bottom of Hero) -->
+                                    <StackPanel IsVisible="{Binding IsInstalled}"
+                                                Orientation="Horizontal" Spacing="6"
+                                                VerticalAlignment="Bottom" HorizontalAlignment="Left"
+                                                Margin="10">
+                                        <!-- Installed Badge -->
+                                        <Border CornerRadius="4" Padding="8,4"
+                                                Background="{DynamicResource SystemFillColorSuccessBrush}"
+                                                BoxShadow="0 2 4 0 #40000000">
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <ui:SymbolIcon Symbol="Checkmark" FontSize="10" Foreground="White"/>
+                                                <TextBlock Text="INSTALLED" FontSize="10" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Border>
+                                        
+                                        <!-- Version Badge (Clickable for Update) -->
+                                        <Button Padding="8,4" CornerRadius="4"
+                                                Command="{Binding $parent[UserControl].((vm:DashboardViewModel)DataContext).UpdateOptiScalerCommand}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip.Tip="Click to update version"
+                                                Background="{DynamicResource AccentFillColorDefaultBrush}"
+                                                BorderThickness="0">
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <ui:SymbolIcon Symbol="Sync" FontSize="10" Foreground="White"/>
+                                                <TextBlock Text="{Binding CurrentVersion}" FontSize="10" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                    
+                                    <!-- Folder Button (Top Left) -->
+                                    <Button HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
+                                            Command="{Binding $parent[UserControl].((vm:DashboardViewModel)DataContext).OpenGameFolderCommand}"
+                                            CommandParameter="{Binding}"
+                                            Theme="{DynamicResource TransparentButtonTheme}"
+                                            Padding="4" ToolTip.Tip="Open Game Folder"
+                                            AutomationProperties.Name="Open Game Folder">
+                                        <ui:SymbolIcon Symbol="Folder" FontSize="14"/>
+                                    </Button>
                                 </Panel>
 
                                 <!-- Content -->
@@ -77,27 +104,17 @@
                                     
                                     <TextBlock Text="{Binding GamePath}" FontSize="11" Opacity="0.5" 
                                                TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding GamePath}"/>
-                                               
-                                    <TextBlock Text="{Binding CurrentVersion, StringFormat='Version: {0}'}" 
-                                               FontSize="11" Opacity="0.7" Margin="0,4,0,0"
-                                               IsVisible="{Binding IsInstalled}"/>
                                 </StackPanel>
 
                                 <!-- Actions -->
-                                <Grid Grid.Row="2" ColumnDefinitions="*,*" Margin="16,0,16,16">
-                                    <Button Grid.Column="0" Grid.ColumnSpan="2" 
-                                            Content="Install" Classes="accent" HorizontalAlignment="Stretch"
+                                <Grid Grid.Row="2" Margin="16,0,16,16">
+                                    <Button Content="Install" Classes="accent" HorizontalAlignment="Stretch"
                                             Command="{Binding $parent[UserControl].((vm:DashboardViewModel)DataContext).InstallOptiScalerCommand}"
                                             CommandParameter="{Binding}"
                                             IsVisible="{Binding !IsInstalled}"/>
 
-                                    <Button Grid.Column="0" Content="Config" HorizontalAlignment="Stretch" Margin="0,0,4,0"
+                                    <Button Content="Config" HorizontalAlignment="Stretch"
                                             Command="{Binding $parent[UserControl].((vm:DashboardViewModel)DataContext).ConfigureGameCommand}"
-                                            CommandParameter="{Binding}"
-                                            IsVisible="{Binding IsInstalled}"/>
-                                            
-                                    <Button Grid.Column="1" Content="Update" HorizontalAlignment="Stretch" Margin="4,0,0,0"
-                                            Command="{Binding $parent[UserControl].((vm:DashboardViewModel)DataContext).UpdateOptiScalerCommand}"
                                             CommandParameter="{Binding}"
                                             IsVisible="{Binding IsInstalled}"/>
                                 </Grid>

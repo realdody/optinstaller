@@ -120,12 +120,15 @@ public partial class DashboardViewModel : ViewModelBase
         var dirName = System.IO.Path.GetFileName(trimmedPath);
         if (string.IsNullOrEmpty(dirName)) dirName = trimmedPath;
 
+        var isInstalled = _optiScalerService.IsInstalled(path, out var installedFilename, out var detectedVersion);
+        
         var game = new GameInstance
         {
             Name = dirName,
             GamePath = path,
-            IsInstalled = _optiScalerService.IsInstalled(path, out var installedFilename),
-            InstalledFilename = installedFilename
+            IsInstalled = isInstalled,
+            InstalledFilename = installedFilename,
+            CurrentVersion = isInstalled ? detectedVersion : "Not Installed"
         };
         Games.Add(game);
     }
@@ -164,12 +167,12 @@ public partial class DashboardViewModel : ViewModelBase
 
         await dialog.ShowAsync();
 
-        game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename);
+        game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename, out var detectedVersion);
         game.InstalledFilename = filename;
         
-        if (game.IsInstalled && wizardVm.InstallSuccess)
+        if (game.IsInstalled)
         {
-             game.CurrentVersion = version.TagName;
+             game.CurrentVersion = detectedVersion;
         }
     }
 
@@ -229,7 +232,16 @@ public partial class DashboardViewModel : ViewModelBase
                  _optiScalerService.UpdateDll(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
             });
 
-            game.CurrentVersion = selectedVersion.TagName;
+            // Re-detect version from disk to be sure
+            if (_optiScalerService.IsInstalled(game.GamePath, out _, out var newVersion))
+            {
+                game.CurrentVersion = newVersion;
+            }
+            else
+            {
+                // Fallback if detection fails for some reason
+                game.CurrentVersion = selectedVersion.TagName;
+            }
             
             var successDialog = new FluentAvalonia.UI.Controls.ContentDialog
             {
@@ -331,6 +343,21 @@ public partial class DashboardViewModel : ViewModelBase
         {
             _configService.CurrentConfig.SavedGamePaths.Remove(path);
             await _configService.SaveAsync();
+        }
+    }
+
+    [RelayCommand]
+    private void OpenGameFolder(GameInstance? game)
+    {
+        if (game == null || string.IsNullOrEmpty(game.GamePath)) return;
+        
+        if (System.IO.Directory.Exists(game.GamePath))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = game.GamePath,
+                UseShellExecute = true
+            });
         }
     }
 }
