@@ -77,7 +77,7 @@ public class VersionService
             foreach (var dir in directories)
             {
                 var dirName = Path.GetFileName(dir);
-                if (versions.Any(v => v.TagName == dirName)) continue;
+                if (versions.Any(v => v.TagName.Equals(dirName, StringComparison.OrdinalIgnoreCase))) continue;
 
                 if (File.Exists(Path.Combine(dir, "OptiScaler.dll")))
                 {
@@ -94,7 +94,11 @@ public class VersionService
             }
         }
 
-        return versions.OrderByDescending(v => v.PublishedAt).ToList();
+        return versions
+            .GroupBy(v => v.TagName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(v => v.IsDownloaded || !string.IsNullOrEmpty(v.LocalPath)).ThenByDescending(v => v.PublishedAt).First())
+            .OrderByDescending(v => v.PublishedAt)
+            .ToList();
     }
 
     private void CheckLocalStatus(OptiScalerVersion version)

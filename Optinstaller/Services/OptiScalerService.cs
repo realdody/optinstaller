@@ -24,9 +24,10 @@ public class OptiScalerService
         "d3d12.dll", "wininet.dll", "winhttp.dll", "OptiScaler.asi" 
     };
 
-    public bool IsInstalled(string gamePath, out string installedFilename)
+    public bool IsInstalled(string gamePath, out string installedFilename, out string detectedVersion)
     {
         installedFilename = string.Empty;
+        detectedVersion = string.Empty;
         
         if (!File.Exists(Path.Combine(gamePath, OptiScalerIniName)))
             return false;
@@ -44,6 +45,7 @@ public class OptiScalerService
                         (info.CompanyName?.Contains("OptiScaler", StringComparison.OrdinalIgnoreCase) == true))
                     {
                         installedFilename = file;
+                        detectedVersion = GetVersionFromFileInfo(info);
                         return true;
                     }
                 }
@@ -56,6 +58,35 @@ public class OptiScalerService
         return false;
     }
 
+    // Overload for backward compatibility
+    public bool IsInstalled(string gamePath, out string installedFilename)
+    {
+        return IsInstalled(gamePath, out installedFilename, out _);
+    }
+
+    private static string GetVersionFromFileInfo(FileVersionInfo info)
+    {
+        // Try FileVersion first (e.g., "0.7.9.0")
+        if (!string.IsNullOrEmpty(info.FileVersion))
+        {
+            var version = info.FileVersion.Trim();
+            // Remove trailing ".0" if present (0.7.9.0 -> 0.7.9)
+            if (version.EndsWith(".0") && version.Count(c => c == '.') >= 3)
+            {
+                version = version[..^2];
+            }
+            return version;
+        }
+        
+        // Fallback to ProductVersion
+        if (!string.IsNullOrEmpty(info.ProductVersion))
+        {
+            return info.ProductVersion.Trim();
+        }
+        
+        return "Unknown";
+    }
+
     public async Task InstallAsync(InstallationOptions options)
     {
         await Task.Run(async () => 
@@ -64,15 +95,8 @@ public class OptiScalerService
             var versionPath = options.VersionPath;
             var targetFilename = options.TargetFilename;
 
-            var sourceDll = Path.Combine(versionPath, "OptiScaler.dll");
-            
-            if (!File.Exists(sourceDll))
-                throw new FileNotFoundException($"OptiScaler.dll not found in {versionPath}.");
-
-            var dest = Path.Combine(gamePath, targetFilename);
-
-            if (File.Exists(dest)) File.Delete(dest);
-            File.Copy(sourceDll, dest, true);
+            // Use the shared method to copy the DLL
+            UpdateDll(gamePath, versionPath, targetFilename);
 
             var configPath = Path.Combine(gamePath, OptiScalerIniName);
             var sourceConfig = Path.Combine(versionPath, OptiScalerIniName);
@@ -120,6 +144,21 @@ public class OptiScalerService
                  CreateUninstallerBat(gamePath, targetFilename);
             }
         });
+    }
+
+    public void UpdateDll(string gamePath, string versionPath, string targetFilename)
+    {
+        var sourceDll = Path.Combine(versionPath, "OptiScaler.dll");
+        
+        if (!File.Exists(sourceDll))
+            throw new FileNotFoundException($"OptiScaler.dll not found in {versionPath}.");
+
+        var dest = Path.Combine(gamePath, targetFilename);
+
+        // Atomic replace: copy to temp file first, then move/overwrite
+        var tempDest = dest + ".tmp";
+        File.Copy(sourceDll, tempDest, true);
+        File.Move(tempDest, dest, true);
     }
 
     private void CreateUninstallerBat(string gamePath, string filename)

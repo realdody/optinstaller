@@ -120,12 +120,15 @@ public partial class DashboardViewModel : ViewModelBase
         var dirName = System.IO.Path.GetFileName(trimmedPath);
         if (string.IsNullOrEmpty(dirName)) dirName = trimmedPath;
 
+        var isInstalled = _optiScalerService.IsInstalled(path, out var installedFilename, out var detectedVersion);
+        
         var game = new GameInstance
         {
             Name = dirName,
             GamePath = path,
-            IsInstalled = _optiScalerService.IsInstalled(path, out var installedFilename),
-            InstalledFilename = installedFilename
+            IsInstalled = isInstalled,
+            InstalledFilename = installedFilename,
+            CurrentVersion = isInstalled ? detectedVersion : "Not Installed"
         };
         Games.Add(game);
     }
@@ -164,12 +167,104 @@ public partial class DashboardViewModel : ViewModelBase
 
         await dialog.ShowAsync();
 
-        game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename);
+        game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename, out var detectedVersion);
         game.InstalledFilename = filename;
         
-        if (game.IsInstalled && wizardVm.InstallSuccess)
+        if (game.IsInstalled)
         {
-             game.CurrentVersion = version.TagName;
+             game.CurrentVersion = detectedVersion;
+        }
+        else
+        {
+             game.CurrentVersion = "Not Installed";
+             game.InstalledFilename = string.Empty;
+        }
+    }
+
+    [RelayCommand]
+    private async Task UpdateOptiScaler(GameInstance? game)
+    {
+        if (game == null || !game.IsInstalled) return;
+
+        if (!DownloadedVersions.Any())
+        {
+            var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "No Versions Available",
+                Content = "Please download an OptiScaler version from the Versions tab before updating.",
+                CloseButtonText = "OK"
+            };
+            await errorDialog.ShowAsync();
+            return;
+        }
+
+        // Show a dialog to select the version
+        var comboBox = new ComboBox
+        {
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            DisplayMemberBinding = new Avalonia.Data.Binding("TagName"),
+            ItemsSource = DownloadedVersions,
+            SelectedItem = SelectedVersion ?? DownloadedVersions.First()
+        };
+
+        var dialog = new FluentAvalonia.UI.Controls.ContentDialog
+        {
+            Title = "Select Version to Update",
+            PrimaryButtonText = "Update",
+            CloseButtonText = "Cancel",
+            Content = new StackPanel
+            {
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock { Text = "Choose the version to update to:" },
+                    comboBox
+                }
+            }
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != FluentAvalonia.UI.Controls.ContentDialogResult.Primary) return;
+
+        var selectedVersion = comboBox.SelectedItem as OptiScalerVersion;
+        if (selectedVersion == null) return;
+
+        try
+        {
+            // Use UpdateDll to replace the file without touching config
+            await Task.Run(() => 
+            {
+                 _optiScalerService.UpdateDll(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
+            });
+
+            // Re-detect version from disk to be sure
+            if (_optiScalerService.IsInstalled(game.GamePath, out _, out var newVersion))
+            {
+                game.CurrentVersion = newVersion;
+            }
+            else
+            {
+                // Fallback if detection fails for some reason
+                game.CurrentVersion = selectedVersion.TagName;
+            }
+            
+            var successDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "Update Complete",
+                Content = $"OptiScaler updated to {selectedVersion.TagName}.",
+                CloseButtonText = "OK"
+            };
+            await successDialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+             var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "Update Error",
+                Content = $"Failed to update: {ex.Message}",
+                CloseButtonText = "OK"
+            };
+            await errorDialog.ShowAsync();
         }
     }
 
@@ -177,7 +272,11 @@ public partial class DashboardViewModel : ViewModelBase
     private async Task UninstallOptiScaler(GameInstance? game)
     {
         if (game == null || !game.IsInstalled) return;
+        await PerformUninstall(game);
+    }
 
+    private async Task<bool> PerformUninstall(GameInstance game)
+    {
         var dialog = new FluentAvalonia.UI.Controls.ContentDialog
         {
             Title = "Confirm Uninstall",
@@ -187,7 +286,7 @@ public partial class DashboardViewModel : ViewModelBase
         };
 
         if (await dialog.ShowAsync() != FluentAvalonia.UI.Controls.ContentDialogResult.Primary)
-            return;
+            return false;
 
         try
         {
@@ -196,6 +295,7 @@ public partial class DashboardViewModel : ViewModelBase
             game.IsInstalled = false;
             game.InstalledFilename = string.Empty;
             game.CurrentVersion = "Not Installed";
+            return true;
         }
         catch (Exception ex)
         {
@@ -206,8 +306,10 @@ public partial class DashboardViewModel : ViewModelBase
                 CloseButtonText = "OK"
             };
             await errorDialog.ShowAsync();
+            return false;
         }
     }
+
     [RelayCommand]
     private async Task ConfigureGame(GameInstance? game)
     {
@@ -233,6 +335,12 @@ public partial class DashboardViewModel : ViewModelBase
     {
         if (game == null) return;
         
+        if (game.IsInstalled)
+        {
+            var uninstalled = await PerformUninstall(game);
+            if (!uninstalled) return;
+        }
+
         var path = game.GamePath;
         Games.Remove(game);
         
@@ -240,6 +348,21 @@ public partial class DashboardViewModel : ViewModelBase
         {
             _configService.CurrentConfig.SavedGamePaths.Remove(path);
             await _configService.SaveAsync();
+        }
+    }
+
+    [RelayCommand]
+    private void OpenGameFolder(GameInstance? game)
+    {
+        if (game == null || string.IsNullOrEmpty(game.GamePath)) return;
+        
+        if (System.IO.Directory.Exists(game.GamePath))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = game.GamePath,
+                UseShellExecute = true
+            });
         }
     }
 }
