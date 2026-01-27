@@ -5,62 +5,282 @@
              xmlns:vm="using:Optinstaller.ViewModels"
              xmlns:models="using:Optinstaller.Models"
              xmlns:ui="using:FluentAvalonia.UI.Controls"
-             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
              x:Class="Optinstaller.Views.VersionManagerView"
              x:DataType="vm:VersionManagerViewModel">
 
-    <Grid RowDefinitions="Auto,Auto,*">
-        <!-- Header -->
-        <StackPanel Grid.Row="0" Margin="20" Spacing="10" Orientation="Vertical">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="OptiScaler Versions" Theme="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center"/>
-                <Button Content="Refresh" Command="{Binding LoadVersionsCommand}" Margin="20,0,0,0"/>
-                <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsLoading}" Width="100" Margin="10,0"/>
-            </StackPanel>
-            <TextBlock Text="{Binding ErrorMessage}" Foreground="Red" IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-        </StackPanel>
+    <Grid RowDefinitions="Auto,*">
+        <!-- Header with Search -->
+        <Border Grid.Row="0" Padding="24,20" 
+                Background="{DynamicResource LayerFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                BorderThickness="0,0,0,1">
+            <Grid RowDefinitions="Auto,Auto,Auto">
+                <!-- Title Row -->
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                    <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                        <ui:SymbolIcon Symbol="Download" FontSize="28"/>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Version Manager" 
+                                       Theme="{StaticResource TitleTextBlockStyle}" 
+                                       FontWeight="SemiBold"/>
+                            <TextBlock Opacity="0.7" FontSize="12">
+                                <TextBlock.Text>
+                                    <MultiBinding StringFormat="{}{0} versions available, {1} downloaded">
+                                        <Binding Path="TotalCount"/>
+                                        <Binding Path="DownloadedCount"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+                    
+                    <Button Grid.Column="1" 
+                            Command="{Binding LoadVersionsCommand}" 
+                            ToolTip.Tip="Refresh versions">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ui:SymbolIcon Symbol="Refresh" FontSize="16"/>
+                            <TextBlock Text="Refresh" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </Grid>
 
-        <!-- Global Progress -->
-        <ProgressBar Grid.Row="1" Value="{Binding DownloadProgress}" IsVisible="{Binding IsDownloading}" 
-                     Height="2" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
+                <!-- Search Box -->
+                <Grid Grid.Row="1" Margin="0,16,0,0" ColumnDefinitions="*,Auto">
+                    <TextBox Grid.Column="0"
+                             Text="{Binding SearchQuery, Mode=TwoWay}"
+                             Watermark="Search versions by name or description..."
+                             MaxWidth="500"
+                             HorizontalAlignment="Left"
+                             MinWidth="350">
+                        <TextBox.InnerLeftContent>
+                            <ui:SymbolIcon Symbol="Find" FontSize="16" Margin="8,0,0,0" Opacity="0.5"/>
+                        </TextBox.InnerLeftContent>
+                        <TextBox.InnerRightContent>
+                            <Button Command="{Binding ClearSearchCommand}"
+                                    IsVisible="{Binding SearchQuery, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                    Theme="{StaticResource TransparentButton}"
+                                    Padding="8,4"
+                                    Margin="0,0,4,0">
+                                <ui:SymbolIcon Symbol="Dismiss" FontSize="12"/>
+                            </Button>
+                        </TextBox.InnerRightContent>
+                    </TextBox>
+                    
+                    <!-- Loading indicator -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" 
+                                IsVisible="{Binding IsLoading}" 
+                                VerticalAlignment="Center" Margin="16,0,0,0">
+                        <ProgressBar IsIndeterminate="True" Width="120" Height="3"/>
+                        <TextBlock Text="Loading..." Opacity="0.7" FontSize="12"/>
+                    </StackPanel>
+                </Grid>
 
-        <!-- Version List -->
-        <ScrollViewer Grid.Row="2" Padding="20">
-            <ItemsControl ItemsSource="{Binding Versions}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="models:OptiScalerVersion">
-                        <Border Margin="0,0,0,10" Padding="15" CornerRadius="8"
-                                Background="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-                                BorderThickness="1" BorderBrush="{DynamicResource SurfaceStrokeColorFlyoutBrush}">
-                            <Grid ColumnDefinitions="*, Auto">
-                                <StackPanel Grid.Column="0" Spacing="5">
-                                    <StackPanel Orientation="Horizontal" Spacing="10">
-                                        <TextBlock Text="{Binding TagName}" FontWeight="Bold" FontSize="16"/>
-                                        <Border CornerRadius="4" Padding="6,2" Background="{DynamicResource SystemAccentColor}" IsVisible="{Binding IsDownloaded}">
-                                            <TextBlock Text="Downloaded" FontSize="10" Foreground="White"/>
-                                        </Border>
-                                    </StackPanel>
-                                    <TextBlock Text="{Binding PublishedAt, StringFormat='Published: {0:d}'}" FontSize="12" Opacity="0.6"/>
-                                    <TextBlock Text="{Binding Description}" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12" Opacity="0.8"/>
-                                </StackPanel>
+                <!-- Error Message -->
+                <Border Grid.Row="2" 
+                        IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                        Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
+                        CornerRadius="6" Padding="12,8" Margin="0,12,0,0">
+                    <Grid ColumnDefinitions="Auto,*">
+                        <ui:SymbolIcon Symbol="Important" Foreground="{DynamicResource SystemFillColorCriticalBrush}" FontSize="16"/>
+                        <TextBlock Grid.Column="1" Text="{Binding ErrorMessage}" 
+                                   Foreground="{DynamicResource SystemFillColorCriticalBrush}" 
+                                   Margin="8,0,0,0" TextWrapping="Wrap"/>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
 
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                    <Button Content="Download" 
-                                            Command="{Binding $parent[UserControl].((vm:VersionManagerViewModel)DataContext).DownloadVersionCommand}"
-                                            CommandParameter="{Binding}"
-                                            IsVisible="{Binding !IsDownloaded}"/>
-                                    
-                                    <Button Content="Delete" 
-                                            Command="{Binding $parent[UserControl].((vm:VersionManagerViewModel)DataContext).DeleteVersionCommand}"
-                                            CommandParameter="{Binding}"
-                                            IsVisible="{Binding IsDownloaded}"
-                                            Theme="{DynamicResource DeleteButtonStyle}"/> <!-- Pseudo style, just red usually -->
-                                </StackPanel>
-                            </Grid>
+        <!-- Main Content -->
+        <ScrollViewer Grid.Row="1" Padding="24,16">
+            <StackPanel Spacing="24">
+                
+                <!-- Downloaded Versions Section -->
+                <StackPanel IsVisible="{Binding HasDownloadedVersions}" Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <ui:SymbolIcon Symbol="Checkmark" 
+                                       Foreground="{DynamicResource SystemFillColorSuccessBrush}" 
+                                       FontSize="18"/>
+                        <TextBlock Text="Downloaded" 
+                                   Theme="{StaticResource SubtitleTextBlockStyle}" 
+                                   FontWeight="SemiBold"/>
+                        <Border CornerRadius="10" Padding="8,2" 
+                                Background="{DynamicResource SystemFillColorSuccessBackgroundBrush}">
+                            <TextBlock Text="{Binding DownloadedVersions.Count}" 
+                                       FontSize="11" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SystemFillColorSuccessBrush}"/>
                         </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                    </StackPanel>
+                    
+                    <ItemsControl ItemsSource="{Binding DownloadedVersions}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="models:OptiScalerVersion">
+                                <Border Margin="0,0,0,8" Padding="16" CornerRadius="8"
+                                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderThickness="1" 
+                                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <!-- Version Info -->
+                                        <StackPanel Grid.Column="0" Spacing="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                                <TextBlock Text="{Binding TagName}" 
+                                                           FontWeight="SemiBold" FontSize="15"/>
+                                                <Border CornerRadius="4" Padding="8,3" 
+                                                        Background="{DynamicResource SystemFillColorSuccessBackgroundBrush}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                                        <ui:SymbolIcon Symbol="Checkmark" FontSize="10"
+                                                                       Foreground="{DynamicResource SystemFillColorSuccessBrush}"/>
+                                                        <TextBlock Text="Installed" FontSize="11" FontWeight="Medium"
+                                                                   Foreground="{DynamicResource SystemFillColorSuccessBrush}"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+                                            
+                                            <StackPanel Orientation="Horizontal" Spacing="16" Opacity="0.6">
+                                                <TextBlock Text="{Binding RelativeTime}" FontSize="12"/>
+                                                <TextBlock Text="{Binding FileSizeDisplay}" FontSize="12" 
+                                                           IsVisible="{Binding FileSize}"/>
+                                            </StackPanel>
+                                            
+                                            <TextBlock Text="{Binding Description}" 
+                                                       MaxLines="2" TextTrimming="CharacterEllipsis" 
+                                                       FontSize="12" Opacity="0.8"
+                                                       IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                        </StackPanel>
+
+                                        <!-- Actions -->
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" 
+                                                    VerticalAlignment="Center">
+                                            <Button ToolTip.Tip="Open folder"
+                                                    Theme="{StaticResource TransparentButton}"
+                                                    Padding="10">
+                                                <ui:SymbolIcon Symbol="Folder" FontSize="16"/>
+                                            </Button>
+                                            <Button Command="{Binding $parent[UserControl].((vm:VersionManagerViewModel)DataContext).DeleteVersionCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    ToolTip.Tip="Delete version">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <ui:SymbolIcon Symbol="Delete" FontSize="14"/>
+                                                    <TextBlock Text="Delete"/>
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Separator -->
+                <Border Height="1" Background="{DynamicResource DividerStrokeColorDefaultBrush}"
+                        IsVisible="{Binding HasDownloadedVersions}"
+                        Margin="0,8"/>
+
+                <!-- Available Versions Section -->
+                <StackPanel IsVisible="{Binding HasAvailableVersions}" Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <ui:SymbolIcon Symbol="Download" 
+                                       Foreground="{DynamicResource SystemAccentColor}" 
+                                       FontSize="18"/>
+                        <TextBlock Text="Available for Download" 
+                                   Theme="{StaticResource SubtitleTextBlockStyle}" 
+                                   FontWeight="SemiBold"/>
+                        <Border CornerRadius="10" Padding="8,2" 
+                                Background="{DynamicResource SystemAccentColorLight3}">
+                            <TextBlock Text="{Binding AvailableVersions.Count}" 
+                                       FontSize="11" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        </Border>
+                    </StackPanel>
+                    
+                    <ItemsControl ItemsSource="{Binding AvailableVersions}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="models:OptiScalerVersion">
+                                <Border Margin="0,0,0,8" CornerRadius="8"
+                                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderThickness="1" 
+                                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+                                    <Grid RowDefinitions="Auto,Auto">
+                                        <!-- Main Content -->
+                                        <Border Grid.Row="0" Padding="16">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                            <!-- Version Info -->
+                                            <StackPanel Grid.Column="0" Spacing="6">
+                                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                                    <TextBlock Text="{Binding TagName}" 
+                                                               FontWeight="SemiBold" FontSize="15"/>
+                                                    <Border CornerRadius="4" Padding="8,3" 
+                                                            Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                                            IsVisible="{Binding FileSize}">
+                                                        <TextBlock Text="{Binding FileSizeDisplay}" 
+                                                                   FontSize="11" Opacity="0.8"/>
+                                                    </Border>
+                                                </StackPanel>
+                                                
+                                                <TextBlock Text="{Binding RelativeTime}" FontSize="12" Opacity="0.6"/>
+                                                
+                                                <TextBlock Text="{Binding Description}" 
+                                                           MaxLines="2" TextTrimming="CharacterEllipsis" 
+                                                           FontSize="12" Opacity="0.8"
+                                                           IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                            </StackPanel>
+
+                                            <!-- Actions -->
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <!-- Download Button (when not downloading) -->
+                                                <Button Command="{Binding $parent[UserControl].((vm:VersionManagerViewModel)DataContext).DownloadVersionCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        IsVisible="{Binding !IsDownloading}"
+                                                        Classes="accent">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <ui:SymbolIcon Symbol="Download" FontSize="14"/>
+                                                        <TextBlock Text="Download"/>
+                                                    </StackPanel>
+                                                </Button>
+                                                
+                                                <!-- Downloading indicator -->
+                                                <StackPanel IsVisible="{Binding IsDownloading}" 
+                                                            Spacing="4" MinWidth="120">
+                                                    <TextBlock Text="{Binding DownloadStatus}" 
+                                                               FontSize="11" 
+                                                               HorizontalAlignment="Center"
+                                                               Opacity="0.8"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                        
+                                        <!-- Download Progress Bar (inline, at bottom of card) -->
+                                        <ProgressBar Grid.Row="1" 
+                                                     Value="{Binding DownloadProgress}"
+                                                     IsVisible="{Binding IsDownloading}"
+                                                     Height="4"
+                                                     Margin="0"
+                                                     CornerRadius="0,0,8,8"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Empty State -->
+                <Border IsVisible="{Binding !HasAvailableVersions}"
+                        Padding="40" HorizontalAlignment="Center">
+                    <StackPanel Spacing="12" HorizontalAlignment="Center"
+                                IsVisible="{Binding !IsLoading}">
+                        <ui:SymbolIcon Symbol="Find" FontSize="48" Opacity="0.3"/>
+                        <TextBlock Text="No versions found" 
+                                   HorizontalAlignment="Center"
+                                   FontSize="16" Opacity="0.6"/>
+                        <TextBlock Text="Try a different search term or refresh the list"
+                                   HorizontalAlignment="Center"
+                                   FontSize="12" Opacity="0.4"
+                                   IsVisible="{Binding SearchQuery, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
         </ScrollViewer>
     </Grid>
 </UserControl>
