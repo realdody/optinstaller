@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -69,9 +70,9 @@ public partial class VersionManagerViewModel : ViewModelBase
         var filtered = string.IsNullOrEmpty(query)
             ? _allVersions.ToList()
             : _allVersions.Where(v =>
-                v.TagName.ToLowerInvariant().Contains(query) ||
-                v.Name.ToLowerInvariant().Contains(query) ||
-                v.Description.ToLowerInvariant().Contains(query)
+                (v.TagName ?? string.Empty).Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                (v.Name ?? string.Empty).Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                (v.Description ?? string.Empty).Contains(query, StringComparison.OrdinalIgnoreCase)
             ).ToList();
 
         DownloadedVersions.Clear();
@@ -145,6 +146,7 @@ public partial class VersionManagerViewModel : ViewModelBase
                 : "Extracting...";
         });
 
+        var versionTagName = version.TagName;
         try
         {
             await _versionService.DownloadVersionAsync(version, progress);
@@ -160,8 +162,24 @@ public partial class VersionManagerViewModel : ViewModelBase
         }
         finally
         {
-            version.IsDownloading = false;
-            version.DownloadProgress = 0;
+            // Find the matching refreshed item in _allVersions by its unique TagName
+            // and update its properties so the UI reflects the final state
+            var refreshedVersion = _allVersions.FirstOrDefault(v => v.TagName == versionTagName);
+            if (refreshedVersion != null)
+            {
+                refreshedVersion.IsDownloading = false;
+                refreshedVersion.DownloadProgress = 0;
+                if (!string.IsNullOrEmpty(version.DownloadStatus) && !version.DownloadStatus.StartsWith("Failed"))
+                {
+                    refreshedVersion.DownloadStatus = version.DownloadStatus;
+                }
+            }
+            else
+            {
+                // Fallback: update the original object if not found in refreshed list
+                version.IsDownloading = false;
+                version.DownloadProgress = 0;
+            }
         }
     }
 
@@ -176,6 +194,30 @@ public partial class VersionManagerViewModel : ViewModelBase
         catch (Exception ex)
         {
             ErrorMessage = $"Delete failed: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void OpenFolder(OptiScalerVersion version)
+    {
+        if (string.IsNullOrEmpty(version.LocalPath) || !System.IO.Directory.Exists(version.LocalPath))
+        {
+            ErrorMessage = "Folder not found for this version.";
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = version.LocalPath,
+                UseShellExecute = true,
+                Verb = "open"
+            });
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to open folder: {ex.Message}";
         }
     }
 }

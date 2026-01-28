@@ -139,7 +139,7 @@
                                             <StackPanel Orientation="Horizontal" Spacing="16" Opacity="0.6">
                                                 <TextBlock Text="{Binding RelativeTime}" FontSize="12"/>
                                                 <TextBlock Text="{Binding FileSizeDisplay}" FontSize="12" 
-                                                           IsVisible="{Binding FileSize}"/>
+                                                           IsVisible="{Binding !!FileSize}"/>
                                             </StackPanel>
                                             
                                             <TextBlock Text="{Binding Description}" 
@@ -151,7 +151,9 @@
                                         <!-- Actions -->
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" 
                                                     VerticalAlignment="Center">
-                                            <Button ToolTip.Tip="Open folder"
+                                            <Button Command="{Binding $parent[UserControl].((vm:VersionManagerViewModel)DataContext).OpenFolderCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    ToolTip.Tip="Open folder"
                                                     Theme="{StaticResource TransparentButton}"
                                                     Padding="10">
                                                 <ui:SymbolIcon Symbol="Folder" FontSize="16"/>
