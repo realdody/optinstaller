@@ -7,12 +7,14 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
+using Optinstaller.Messages;
 using Optinstaller.Models;
 using Optinstaller.Services;
 
 namespace Optinstaller.ViewModels;
 
-public partial class DashboardViewModel : ViewModelBase
+public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChangedMessage>
 {
     private readonly OptiScalerService _optiScalerService;
     private readonly VersionService _versionService;
@@ -47,6 +49,25 @@ public partial class DashboardViewModel : ViewModelBase
         _optiScalerService = new OptiScalerService();
         _versionService = new VersionService();
         _configService = new ConfigurationService();
+
+        WeakReferenceMessenger.Default.Register(this);
+    }
+    
+    public void Receive(VersionsChangedMessage message)
+    {
+        SafeFireAndForget(RefreshVersions());
+    }
+
+    private async void SafeFireAndForget(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error in background task: {ex}");
+        }
     }
     
     public async Task InitializeAsync()
@@ -152,20 +173,30 @@ public partial class DashboardViewModel : ViewModelBase
 
         var version = SelectedVersion ?? DownloadedVersions.First();
 
-        var wizardVm = new InstallationWizardViewModel(game, version);
+        var wizardVm = new InstallationWizardViewModel(game, DownloadedVersions, version);
         
-        var dialog = new FluentAvalonia.UI.Controls.ContentDialog
-        {
-            Title = "Install OptiScaler",
-            Content = new Views.InstallationWizardView { DataContext = wizardVm },
-            PrimaryButtonText = null,
-            SecondaryButtonText = null,
-            CloseButtonText = null
+        var window = new Views.InstallationWizardWindow 
+        { 
+            DataContext = wizardVm 
         };
 
-        wizardVm.RequestClose += (s, e) => dialog.Hide();
-
-        await dialog.ShowAsync();
+        wizardVm.RequestClose += (s, e) => window.Close();
+        
+        if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop && desktop.MainWindow != null)
+        {
+             await window.ShowDialog(desktop.MainWindow);
+        }
+        else
+        {
+             var errorDialog = new FluentAvalonia.UI.Controls.ContentDialog
+            {
+                Title = "Error Launching Wizard",
+                Content = "Could not find the main window to attach the wizard to.",
+                CloseButtonText = "OK"
+            };
+            await errorDialog.ShowAsync();
+            return;
+        }
 
         game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename, out var detectedVersion);
         game.InstalledFilename = filename;

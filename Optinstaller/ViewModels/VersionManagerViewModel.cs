@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
+using Optinstaller.Messages;
 using Optinstaller.Models;
 using Optinstaller.Services;
 
@@ -154,6 +156,7 @@ public partial class VersionManagerViewModel : ViewModelBase
             
             // Refresh the list to update status
             await LoadVersions();
+            WeakReferenceMessenger.Default.Send(new VersionsChangedMessage(true));
         }
         catch (Exception ex)
         {
@@ -190,6 +193,7 @@ public partial class VersionManagerViewModel : ViewModelBase
         {
             _versionService.DeleteVersion(version);
             await LoadVersions();
+            WeakReferenceMessenger.Default.Send(new VersionsChangedMessage(true));
         }
         catch (Exception ex)
         {

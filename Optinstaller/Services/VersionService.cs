@@ -14,8 +14,11 @@ namespace Optinstaller.Services;
 
 public class VersionService
 {
-    private const string GitHubApiUrl = "https://api.github.com/repos/OptiScaler/OptiScaler/releases";
-    private const string BleedingEdgeApiUrl = "https://api.github.com/repos/realdody/OptiScaler-Bleeding-Edge/releases";
+    private readonly string[] _gitHubApiUrls = 
+    {
+        "https://api.github.com/repos/OptiScaler/OptiScaler/releases",
+        "https://api.github.com/repos/realdody/OptiScaler-Bleeding-Edge/releases"
+    };
     private readonly string _versionsDirectory;
     private readonly HttpClient _httpClient;
 
@@ -38,56 +41,45 @@ public class VersionService
         // Fetch from primary source (Official)
         try
         {
-            var officialVersions = await FetchReleasesFromSourceAsync(GitHubApiUrl, "Official");
-            versions.AddRange(officialVersions);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error fetching official releases: {ex.Message}");
-        }
-
-        // Fetch from secondary source (Bleeding Edge)
-        try
-        {
-            var bleedingEdgeVersions = await FetchReleasesFromSourceAsync(BleedingEdgeApiUrl, "BleedingEdge");
-            versions.AddRange(bleedingEdgeVersions);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error fetching bleeding edge releases: {ex.Message}");
-        }
-
-        // Fetch releases from a specific GitHub API source
-        async Task<List<OptiScalerVersion>> FetchReleasesFromSourceAsync(string apiUrl, string sourceName)
-        {
-            var result = new List<OptiScalerVersion>();
-            var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(apiUrl);
-            if (releases != null)
+            foreach (var url in _gitHubApiUrls)
             {
-                foreach (var release in releases)
+                try
                 {
-                    var asset = release.Assets?.FirstOrDefault(a => 
-                        a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || 
-                        a.Name.EndsWith(".7z", StringComparison.OrdinalIgnoreCase));
-                    
-                    if (asset == null) continue;
-
-                    var version = new OptiScalerVersion
+                    var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(url);
+                    if (releases != null)
                     {
-                        Name = release.Name ?? release.TagName,
-                        TagName = release.TagName,
-                        Description = release.Description,
-                        PublishedAt = release.PublishedAt,
-                        DownloadUrl = asset.BrowserDownloadUrl,
-                        FileSize = asset.Size,
-                        Source = sourceName
-                    };
+                        foreach (var release in releases)
+                        {
+                            var asset = release.Assets?.FirstOrDefault(a => 
+                                a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || 
+                                a.Name.EndsWith(".7z", StringComparison.OrdinalIgnoreCase));
+                            
+                            if (asset == null) continue;
 
-                    CheckLocalStatus(version);
-                    result.Add(version);
+                            var version = new OptiScalerVersion
+                            {
+                                Name = release.Name ?? release.TagName,
+                                TagName = release.TagName,
+                                Description = release.Description,
+                                PublishedAt = release.PublishedAt,
+                                DownloadUrl = asset.BrowserDownloadUrl,
+                                FileSize = asset.Size
+                            };
+
+                            CheckLocalStatus(version);
+                            versions.Add(version);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error fetching releases from {url}: {ex.Message}");
                 }
             }
-            return result;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in version fetching process: {ex.Message}");
         }
 
         // Scan local Versions directory for folders that might not be in the GitHub list (or if offline)
