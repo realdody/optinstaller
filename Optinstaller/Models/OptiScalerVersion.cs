@@ -12,6 +12,10 @@ public partial class OptiScalerVersion : ObservableObject
     public DateTime PublishedAt { get; set; }
     public string LocalPath { get; set; } = string.Empty;
     public long FileSize { get; set; }
+    public string Source { get; set; } = "Official"; // "Official" or "BleedingEdge"
+    
+    // Computed property for UI binding
+    public bool IsBleedingEdge => Source == "BleedingEdge";
 
     [ObservableProperty]
     private bool _isDownloaded;

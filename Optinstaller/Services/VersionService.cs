@@ -15,6 +15,7 @@ namespace Optinstaller.Services;
 public class VersionService
 {
     private const string GitHubApiUrl = "https://api.github.com/repos/OptiScaler/OptiScaler/releases";
+    private const string BleedingEdgeApiUrl = "https://api.github.com/repos/realdody/OptiScaler-Bleeding-Edge/releases";
     private readonly string _versionsDirectory;
     private readonly HttpClient _httpClient;
 
@@ -34,9 +35,33 @@ public class VersionService
     {
         var versions = new List<OptiScalerVersion>();
 
+        // Fetch from primary source (Official)
         try
         {
-            var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(GitHubApiUrl);
+            var officialVersions = await FetchReleasesFromSourceAsync(GitHubApiUrl, "Official");
+            versions.AddRange(officialVersions);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching official releases: {ex.Message}");
+        }
+
+        // Fetch from secondary source (Bleeding Edge)
+        try
+        {
+            var bleedingEdgeVersions = await FetchReleasesFromSourceAsync(BleedingEdgeApiUrl, "BleedingEdge");
+            versions.AddRange(bleedingEdgeVersions);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching bleeding edge releases: {ex.Message}");
+        }
+
+        // Fetch releases from a specific GitHub API source
+        async Task<List<OptiScalerVersion>> FetchReleasesFromSourceAsync(string apiUrl, string sourceName)
+        {
+            var result = new List<OptiScalerVersion>();
+            var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(apiUrl);
             if (releases != null)
             {
                 foreach (var release in releases)
@@ -54,20 +79,18 @@ public class VersionService
                         Description = release.Description,
                         PublishedAt = release.PublishedAt,
                         DownloadUrl = asset.BrowserDownloadUrl,
-                        FileSize = asset.Size
+                        FileSize = asset.Size,
+                        Source = sourceName
                     };
 
                     CheckLocalStatus(version);
-                    versions.Add(version);
+                    result.Add(version);
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error fetching releases: {ex.Message}");
+            return result;
         }
 
-        // 2. Scan local Versions directory for folders that might not be in the GitHub list (or if offline)
+        // Scan local Versions directory for folders that might not be in the GitHub list (or if offline)
         // This ensures installed versions show up even if GitHub is down
         if (Directory.Exists(_versionsDirectory))
         {
@@ -79,6 +102,12 @@ public class VersionService
 
                 if (File.Exists(Path.Combine(dir, "OptiScaler.dll")))
                 {
+                    // Determine source from directory name or default to Official
+                    var source = dirName.Contains("bleeding", StringComparison.OrdinalIgnoreCase) || 
+                                 dirName.Contains("edge", StringComparison.OrdinalIgnoreCase)
+                        ? "BleedingEdge" 
+                        : "Official";
+                    
                     versions.Add(new OptiScalerVersion
                     {
                         Name = dirName,
@@ -86,7 +115,8 @@ public class VersionService
                         Description = "Locally installed version",
                         PublishedAt = Directory.GetCreationTime(dir),
                         IsDownloaded = true,
-                        LocalPath = dir
+                        LocalPath = dir,
+                        Source = source
                     });
                 }
             }
