@@ -24,7 +24,23 @@
     </PackageReference>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="FluentAvaloniaUI" Version="2.4.1" />
-    <PackageReference Include="SharpCompress" Version="0.44.1" />
+    <PackageReference Include="SharpSevenZip" Version="2.0.35" />
     <PackageReference Include="System.Management" Version="10.0.2" />
+  </ItemGroup>
+
+  <!-- SharpSevenZip native library deployment -->
+  <!-- Native runtime assets for Windows x86/x64 are automatically copied by the Content items below -->
+  <ItemGroup>
+    <!-- Native runtime assets for Windows x86/x64 -->
+    <Content Include="$(NuGetPackageRoot)\sharpsevenzip\2.0.35\runtimes\win-x86\native\7z.dll" Condition="Exists('$(NuGetPackageRoot)\sharpsevenzip\2.0.35\runtimes\win-x86\native\7z.dll')">
+      <Link>x86\7z.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+    <Content Include="$(NuGetPackageRoot)\sharpsevenzip\2.0.35\runtimes\win-x64\native\7z.dll" Condition="Exists('$(NuGetPackageRoot)\sharpsevenzip\2.0.35\runtimes\win-x64\native\7z.dll')">
+      <Link>x64\7z.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
   </ItemGroup>
 </Project>
