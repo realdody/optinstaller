@@ -113,13 +113,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             return false;
         }
 
-        var normalizedPath = Path.GetFullPath(rawPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-        if (OperatingSystem.IsWindows())
-        {
-            normalizedPath = normalizedPath.ToLowerInvariant();
-        }
+        var normalizedPath = NormalizeGamePath(rawPath);
 
         if (Games.Any(g => g.GamePath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
         {
@@ -128,7 +122,8 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
         AddGameInternal(normalizedPath);
 
-        if (!_configService.CurrentConfig.SavedGamePaths.Contains(normalizedPath))
+        if (!_configService.CurrentConfig.SavedGamePaths.Any(path =>
+                path.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
         {
             _configService.CurrentConfig.SavedGamePaths.Add(normalizedPath);
             await _configService.SaveAsync();
@@ -139,7 +134,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     private void AddGameInternal(string path)
     {
-        var trimmedPath = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var trimmedPath = NormalizeGamePath(path);
         var dirName = Path.GetFileName(trimmedPath);
         if (string.IsNullOrEmpty(dirName))
         {
@@ -239,11 +234,43 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         var path = game.GamePath;
         Games.Remove(game);
 
-        if (_configService.CurrentConfig.SavedGamePaths.Contains(path))
+        var savedPath = _configService.CurrentConfig.SavedGamePaths.FirstOrDefault(saved =>
+            saved.Equals(path, StringComparison.OrdinalIgnoreCase));
+
+        if (savedPath != null)
         {
-            _configService.CurrentConfig.SavedGamePaths.Remove(path);
+            _configService.CurrentConfig.SavedGamePaths.Remove(savedPath);
             await _configService.SaveAsync();
         }
+    }
+
+    private static string NormalizeGamePath(string path)
+    {
+        var normalizedPath = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (!OperatingSystem.IsWindows() || !Directory.Exists(normalizedPath))
+        {
+            return normalizedPath;
+        }
+
+        var root = Path.GetPathRoot(normalizedPath);
+        if (string.IsNullOrEmpty(root) || normalizedPath.Length <= root.Length)
+        {
+            return normalizedPath;
+        }
+
+        var currentPath = root;
+        var segments = normalizedPath[root.Length..]
+            .Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var segment in segments)
+        {
+            var matchedPath = Directory.EnumerateFileSystemEntries(currentPath, segment).FirstOrDefault();
+            currentPath = matchedPath ?? Path.Combine(currentPath, segment);
+        }
+
+        return currentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     public void OpenGameFolder(GameInstance? game)

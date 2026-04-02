@@ -45,7 +45,7 @@ public class VersionService
             {
                 try
                 {
-                    var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(url);
+                    var releases = await _httpClient.GetFromJsonAsync(url, VersionServiceJsonContext.Default.ListGitHubRelease);
                     if (releases != null)
                     {
                         foreach (var release in releases)
@@ -277,8 +277,7 @@ public class VersionService
     {
         // SharpSevenZip needs the path to 7z.dll
         // It's bundled with the package, but we need to set the path based on architecture
-        var assemblyPath = Path.GetDirectoryName(typeof(SharpSevenZipExtractor).Assembly.Location) 
-                          ?? AppDomain.CurrentDomain.BaseDirectory;
+        var assemblyPath = AppDomain.CurrentDomain.BaseDirectory;
         
         string libName;
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -397,33 +396,34 @@ public class VersionService
         version.LocalPath = string.Empty;
     }
 
-    private class GitHubRelease
-    {
-        [JsonPropertyName("tag_name")]
-        public string TagName { get; set; } = "";
+}
 
-        [JsonPropertyName("name")]
-        public string? Name { get; set; }
+internal sealed class GitHubRelease
+{
+    [JsonPropertyName("tag_name")]
+    public string TagName { get; set; } = "";
 
-        [JsonPropertyName("body")]
-        public string Description { get; set; } = "";
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
 
-        [JsonPropertyName("published_at")]
-        public DateTime PublishedAt { get; set; }
+    [JsonPropertyName("body")]
+    public string Description { get; set; } = "";
 
-        [JsonPropertyName("assets")]
-        public List<GitHubAsset>? Assets { get; set; }
-    }
+    [JsonPropertyName("published_at")]
+    public DateTime PublishedAt { get; set; }
 
-    private class GitHubAsset
-    {
-        [JsonPropertyName("name")]
-        public string Name { get; set; } = "";
+    [JsonPropertyName("assets")]
+    public List<GitHubAsset>? Assets { get; set; }
+}
 
-        [JsonPropertyName("browser_download_url")]
-        public string BrowserDownloadUrl { get; set; } = "";
+internal sealed class GitHubAsset
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
 
-        [JsonPropertyName("size")]
-        public long Size { get; set; }
-    }
+    [JsonPropertyName("browser_download_url")]
+    public string BrowserDownloadUrl { get; set; } = "";
+
+    [JsonPropertyName("size")]
+    public long Size { get; set; }
 }

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using ImGuiNET;
 using Optinstaller.Models;
@@ -24,11 +26,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private const ImGuiWindowFlags PanelWindowFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
     private const ImGuiChildFlags PaddedPanelChildFlags = ImGuiChildFlags.Borders | ImGuiChildFlags.AlwaysUseWindowPadding;
 
-    private static readonly Vector4 InfoColor = new(0.67f, 0.78f, 0.97f, 1f);
-    private static readonly Vector4 SuccessColor = new(0.48f, 0.85f, 0.55f, 1f);
-    private static readonly Vector4 WarningColor = new(0.96f, 0.76f, 0.32f, 1f);
-    private static readonly Vector4 ErrorColor = new(0.96f, 0.43f, 0.43f, 1f);
-    private static readonly Vector4 MutedTextColor = new(0.63f, 0.67f, 0.73f, 1f);
+    private static readonly Vector4 InfoColor = new(0.53f, 0.74f, 1.00f, 1f);
+    private static readonly Vector4 SuccessColor = new(0.46f, 0.88f, 0.58f, 1f);
+    private static readonly Vector4 WarningColor = new(1.00f, 0.80f, 0.34f, 1f);
+    private static readonly Vector4 ErrorColor = new(1.00f, 0.50f, 0.50f, 1f);
+    private static readonly Vector4 MutedTextColor = new(0.69f, 0.73f, 0.80f, 1f);
 
     private readonly UiSynchronizationContext _syncContext;
     private readonly MainWindowViewModel _mainViewModel = new();
@@ -107,7 +109,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         _gl = _window.CreateOpenGL();
         _input = _window.CreateInput();
-        _imgui = new ImGuiController(_gl, _window, _input);
+        _imgui = new ImGuiController(_gl, _window, _input, CreateFontConfig(), ConfigureImGuiIo);
 
         _gl.ClearColor(0.07f, 0.09f, 0.12f, 1f);
         _gl.Viewport(_window.FramebufferSize);
@@ -228,7 +230,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private void RenderSidebar()
     {
-        ImGui.BeginChild("Sidebar", new Vector2(248f, 0f), ImGuiChildFlags.Borders);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16f, 14f));
+        ImGui.BeginChild("Sidebar", new Vector2(248f, 0f), PaddedPanelChildFlags, PanelWindowFlags);
 
         ImGui.TextColored(InfoColor, "OPTINSTALLER");
         TextMuted("OptiScaler manager");
@@ -247,12 +250,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
         RenderSidebarSignal("Downloads", _mainViewModel.Dashboard.DownloadedVersions.Count.ToString(), WarningColor);
 
         ImGui.EndChild();
+        ImGui.PopStyleVar();
     }
 
     private void DrawPageButton(AppPage page, string title, string subtitle)
     {
         var selected = _currentPage == page;
-        if (DrawSelectableRow($"Nav::{page}", title, subtitle, selected, InfoColor, string.Empty))
+        if (DrawSelectableRow($"Nav::{page}", title, subtitle, selected, InfoColor, string.Empty, centerText: false))
         {
             _currentPage = page;
         }
@@ -308,9 +312,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         var (accent, background, label) = _notificationKind switch
         {
-            NotificationKind.Success => (SuccessColor, new Vector4(0.09f, 0.17f, 0.12f, 1f), "Success"),
-            NotificationKind.Error => (ErrorColor, new Vector4(0.18f, 0.09f, 0.10f, 1f), "Error"),
-            _ => (InfoColor, new Vector4(0.08f, 0.12f, 0.19f, 1f), "Info"),
+            NotificationKind.Success => (SuccessColor, new Vector4(0.08f, 0.16f, 0.11f, 1f), "Success"),
+            NotificationKind.Error => (ErrorColor, new Vector4(0.21f, 0.09f, 0.10f, 1f), "Error"),
+            _ => (InfoColor, new Vector4(0.08f, 0.13f, 0.22f, 1f), "Info"),
         };
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, background);
@@ -414,7 +418,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 detailText,
                 isSelected,
                 accent,
-                badge))
+                badge,
+                centerText: true))
             {
                 _selectedGamePath = game.GamePath;
                 dashboard.SelectedGame = game;
@@ -469,9 +474,20 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.Spacing();
         RenderSectionHeader("Details");
         RenderKeyValue("Game Path", game.GamePath);
-        RenderKeyValue("Current Version", game.CurrentVersion);
-        RenderKeyValue("Install State", game.IsInstalled ? "OptiScaler detected" : "Not installed");
-        RenderKeyValue("Installed Filename", string.IsNullOrWhiteSpace(game.InstalledFilename) ? "-" : game.InstalledFilename);
+
+        if (ImGui.BeginTable("GameDetailSummary", 3, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
+        {
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Current Version", game.CurrentVersion);
+
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Install State", game.IsInstalled ? "Installed" : "Not installed");
+
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("DLL", string.IsNullOrWhiteSpace(game.InstalledFilename) ? "-" : game.InstalledFilename);
+
+            ImGui.EndTable();
+        }
 
         ImGui.Spacing();
         RenderSectionHeader("Actions");
@@ -638,7 +654,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 detailText,
                 isSelected,
                 accent,
-                version.IsBleedingEdge ? "BE" : "Official"))
+                version.IsBleedingEdge ? "BE" : "Official",
+                centerText: true))
             {
                 _selectedVersionTag = version.TagName;
             }
@@ -667,17 +684,24 @@ public sealed class OptinstallerImGuiApp : IDisposable
         TextMuted(version.IsBleedingEdge ? "Bleeding Edge" : "Official");
         ImGui.Spacing();
         RenderSectionHeader("Release Details");
-        RenderKeyValue("Source", version.IsBleedingEdge ? "Bleeding Edge" : "Official");
-        RenderKeyValue("Published", version.PublishedAt == default ? "-" : version.PublishedAt.ToLocalTime().ToString("g"));
-        RenderKeyValue("Relative Time", version.RelativeTime);
-        RenderKeyValue("File Size", string.IsNullOrWhiteSpace(version.FileSizeDisplay) ? "-" : version.FileSizeDisplay);
-        RenderKeyValue("Local Path", version.IsDownloaded && !string.IsNullOrWhiteSpace(version.LocalPath) ? version.LocalPath : "-");
+
+        if (ImGui.BeginTable("ReleaseDetailSummary", 3, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
+        {
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Source", version.IsBleedingEdge ? "Bleeding Edge" : "Official");
+
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Published", version.PublishedAt == default ? "-" : version.PublishedAt.ToLocalTime().ToString("g"));
+
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Relative Time", version.RelativeTime);
+
+            ImGui.EndTable();
+        }
 
         ImGui.Spacing();
-        RenderSectionHeader("Release Notes");
-        ImGui.TextWrapped(string.IsNullOrWhiteSpace(version.Description)
-            ? "No release notes were available for this entry."
-            : version.Description);
+        RenderKeyValue("File Size", string.IsNullOrWhiteSpace(version.FileSizeDisplay) ? "-" : version.FileSizeDisplay);
+        RenderKeyValue("Local Path", version.IsDownloaded && !string.IsNullOrWhiteSpace(version.LocalPath) ? version.LocalPath : "-");
 
         ImGui.Spacing();
         RenderSectionHeader("Actions");
@@ -685,10 +709,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             ImGui.TextWrapped(string.IsNullOrWhiteSpace(version.DownloadStatus) ? "Downloading..." : version.DownloadStatus);
             ImGui.ProgressBar((float)(version.DownloadProgress / 100d), new Vector2(-1f, 0f));
-            return;
         }
-
-        if (version.IsDownloaded)
+        else if (version.IsDownloaded)
         {
             if (ImGui.Button("Open Folder", new Vector2(140f, 0f)))
             {
@@ -720,6 +742,16 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 $"Could not download {version.TagName}",
                 $"Downloaded {version.TagName}.");
         }
+
+        ImGui.Spacing();
+        RenderSectionHeader("Release Notes");
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(12f, 10f));
+        ImGui.BeginChild("ReleaseNotesBody", new Vector2(0f, 0f), ImGuiChildFlags.Borders);
+        RenderMarkdownText(string.IsNullOrWhiteSpace(version.Description)
+            ? "No release notes were available for this entry."
+            : version.Description);
+        ImGui.EndChild();
+        ImGui.PopStyleVar();
     }
 
     private void RenderSettings()
@@ -781,11 +813,33 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         ImGui.Spacing();
         ImGui.SeparatorText("Runtime");
-        RenderKeyValue("UI Host", "Dear ImGui + Silk.NET + OpenGL");
-        RenderKeyValue("Framework", Environment.Version.ToString());
-        RenderKeyValue("Window Size", $"{_window.Size.X} x {_window.Size.Y}");
-        RenderKeyValue("Tracked Games", _mainViewModel.Dashboard.Games.Count.ToString());
-        RenderKeyValue("Downloaded Versions", _mainViewModel.Dashboard.DownloadedVersions.Count.ToString());
+
+        if (ImGui.BeginTable("RuntimeSummaryTop", 3, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
+        {
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("UI Host", "Dear ImGui + Silk.NET + OpenGL");
+
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Framework", Environment.Version.ToString());
+
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Window Size", $"{_window.Size.X} x {_window.Size.Y}");
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+
+        if (ImGui.BeginTable("RuntimeSummaryBottom", 2, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
+        {
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Tracked Games", _mainViewModel.Dashboard.Games.Count.ToString());
+
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Downloaded Versions", _mainViewModel.Dashboard.DownloadedVersions.Count.ToString());
+
+            ImGui.EndTable();
+        }
         ImGui.EndChild();
 
         ImGui.EndTable();
@@ -804,6 +858,144 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.Separator();
     }
 
+    private static void RenderMarkdownText(string markdown)
+    {
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            return;
+        }
+
+        var lines = markdown.Replace("\r\n", "\n").Split('\n');
+        var inCodeBlock = false;
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.TrimEnd();
+            var trimmed = line.Trim();
+
+            if (trimmed.StartsWith("```", StringComparison.Ordinal))
+            {
+                inCodeBlock = !inCodeBlock;
+                continue;
+            }
+
+            if (inCodeBlock)
+            {
+                if (!string.IsNullOrEmpty(trimmed))
+                {
+                    ImGui.TextUnformatted(trimmed);
+                }
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                ImGui.Spacing();
+                continue;
+            }
+
+            if (trimmed.StartsWith("---", StringComparison.Ordinal) || trimmed.StartsWith("***", StringComparison.Ordinal))
+            {
+                ImGui.Separator();
+                continue;
+            }
+
+            var headingLevel = 0;
+            while (headingLevel < trimmed.Length && trimmed[headingLevel] == '#')
+            {
+                headingLevel++;
+            }
+
+            if (headingLevel > 0 && headingLevel < trimmed.Length && trimmed[headingLevel] == ' ')
+            {
+                var headingText = NormalizeMarkdownInline(trimmed[(headingLevel + 1)..]);
+                ImGui.TextColored(headingLevel <= 2 ? InfoColor : new Vector4(0.84f, 0.88f, 0.95f, 1f), headingText);
+                continue;
+            }
+
+            var listPrefix = string.Empty;
+            if (trimmed.StartsWith("- ", StringComparison.Ordinal) || trimmed.StartsWith("* ", StringComparison.Ordinal) || trimmed.StartsWith("+ ", StringComparison.Ordinal))
+            {
+                listPrefix = "- ";
+                trimmed = trimmed[2..];
+            }
+            else
+            {
+                var numberedMatch = Regex.Match(trimmed, "^(\\d+)\\.\\s+");
+                if (numberedMatch.Success)
+                {
+                    listPrefix = numberedMatch.Value;
+                    trimmed = trimmed[numberedMatch.Length..];
+                }
+            }
+
+            if (trimmed.StartsWith(">", StringComparison.Ordinal))
+            {
+                trimmed = trimmed.TrimStart('>', ' ');
+                ImGui.PushStyleColor(ImGuiCol.Text, MutedTextColor);
+                ImGui.TextWrapped(NormalizeMarkdownInline(trimmed));
+                ImGui.PopStyleColor();
+                continue;
+            }
+
+            var text = NormalizeMarkdownInline(trimmed);
+            ImGui.TextWrapped(listPrefix + text);
+        }
+    }
+
+    private static string NormalizeMarkdownInline(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var normalized = text;
+        normalized = Regex.Replace(normalized, @"!\[([^\]]*)\]\(([^\)]+)\)", "$1");
+        normalized = Regex.Replace(normalized, @"\[([^\]]+)\]\(([^\)]+)\)", "$1 ($2)");
+        normalized = normalized.Replace("`", string.Empty);
+        normalized = normalized.Replace("**", string.Empty).Replace("__", string.Empty);
+        normalized = normalized.Replace("*", string.Empty).Replace("_", string.Empty);
+        normalized = normalized.Replace("~~", string.Empty);
+        return normalized.Trim();
+    }
+
+    private static ImGuiFontConfig? CreateFontConfig()
+    {
+        var bundledHackFont = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "Hack-Regular.ttf");
+        if (File.Exists(bundledHackFont))
+        {
+            return new ImGuiFontConfig(bundledHackFont, 16, io => io.Fonts.GetGlyphRangesDefault());
+        }
+
+        var fontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+        var preferredFonts = new[]
+        {
+            "bahnschrift.ttf",
+            "segoeui.ttf",
+            "tahoma.ttf",
+            "verdana.ttf",
+        };
+
+        foreach (var fontFile in preferredFonts)
+        {
+            var fontPath = Path.Combine(fontsDirectory, fontFile);
+            if (File.Exists(fontPath))
+            {
+                return new ImGuiFontConfig(fontPath, 16, io => io.Fonts.GetGlyphRangesDefault());
+            }
+        }
+
+        return null;
+    }
+
+    private static void ConfigureImGuiIo()
+    {
+        var io = ImGui.GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+        io.FontGlobalScale = 1.0f;
+    }
+
     private void RenderDashboardToolbar(DashboardViewModel dashboard, int totalGames, int installedCount, int pendingCount)
     {
         if (ImGui.Button("Add Game", new Vector2(120f, 0f)))
@@ -817,29 +1009,36 @@ public sealed class OptinstallerImGuiApp : IDisposable
             StartUiTask(() => dashboard.InitializeAsync(), "Could not rescan library", "Rescanned library and local versions.");
         }
 
-        ImGui.SameLine();
-        ImGui.TextDisabled($"Games {totalGames}");
-        ImGui.SameLine();
-        ImGui.TextDisabled($"Installed {installedCount}");
-        ImGui.SameLine();
-        ImGui.TextDisabled($"Ready {pendingCount}");
-        ImGui.SameLine();
-        ImGui.TextDisabled($"Versions {dashboard.DownloadedVersions.Count}");
+        RenderToolbarStat($"Games {totalGames}");
+        RenderToolbarStat($"Installed {installedCount}");
+        RenderToolbarStat($"Ready {pendingCount}");
+        RenderToolbarStat($"Versions {dashboard.DownloadedVersions.Count}", isLast: true);
     }
 
     private void RenderVersionsToolbar(VersionManagerViewModel versions, OptiScalerVersion? selectedVersion)
     {
-        ImGui.TextDisabled($"All {versions.TotalCount}");
-        ImGui.SameLine();
-        ImGui.TextDisabled($"Downloaded {versions.DownloadedCount}");
-        ImGui.SameLine();
-        ImGui.TextDisabled($"Online {versions.AvailableVersions.Count}");
+        RenderToolbarStat($"All {versions.TotalCount}");
+        RenderToolbarStat($"Downloaded {versions.DownloadedCount}");
+        RenderToolbarStat($"Online {versions.AvailableVersions.Count}", selectedVersion == null);
 
         if (selectedVersion != null)
         {
-            ImGui.SameLine();
-            ImGui.TextDisabled($"Selected {selectedVersion.TagName}");
+            RenderToolbarStat($"Selected {selectedVersion.TagName}", isLast: true);
         }
+    }
+
+    private static void RenderToolbarStat(string text, bool isLast = false)
+    {
+        ImGui.SameLine(0f, 10f);
+        ImGui.TextDisabled(text);
+
+        if (isLast)
+        {
+            return;
+        }
+
+        ImGui.SameLine(0f, 10f);
+        ImGui.TextDisabled("|");
     }
 
     private void RenderDashboardHero(DashboardViewModel dashboard, GameInstance? selectedGame, int totalGames, int installedCount, int pendingCount)
@@ -1109,8 +1308,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         ImGui.Dummy(size);
 
-        drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.15f)), 999f);
-        drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.45f)), 999f);
+        drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.15f)), 2f);
+        drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.45f)), 2f);
         drawList.AddText(min + padding, ImGui.ColorConvertFloat4ToU32(accent), text);
     }
 
@@ -1778,11 +1977,17 @@ public sealed class OptinstallerImGuiApp : IDisposable
         string detail,
         bool selected,
         Vector4 accent,
-        string badge)
+        string badge,
+        bool centerText = false)
     {
-        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 8f);
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
         var min = ImGui.GetCursorScreenPos();
-        var size = new Vector2(Math.Max(0f, ImGui.GetContentRegionAvail().X - 8f), 50f);
+        var lineHeight = ImGui.GetTextLineHeight();
+        var hasDetail = !string.IsNullOrWhiteSpace(detail);
+        var rowHeight = hasDetail
+            ? MathF.Max(56f, (lineHeight * 2f) + 20f)
+            : MathF.Max(34f, lineHeight + 14f);
+        var size = new Vector2(Math.Max(0f, ImGui.GetContentRegionAvail().X - 6f), rowHeight);
         ImGui.InvisibleButton(id, size);
         var hovered = ImGui.IsItemHovered();
         var clicked = ImGui.IsItemClicked();
@@ -1790,14 +1995,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var emphasis = AnimateValue($"Row::{id}", selected ? 1f : hovered ? 0.5f : 0f);
         var max = min + size;
         var drawList = ImGui.GetWindowDrawList();
-        var background = Vector4.Lerp(new Vector4(0.10f, 0.12f, 0.16f, 0.30f), new Vector4(0.15f, 0.20f, 0.28f, 0.82f), emphasis);
-        var border = Vector4.Lerp(new Vector4(0.17f, 0.20f, 0.26f, 0.20f), new Vector4(accent.X, accent.Y, accent.Z, 0.65f), emphasis);
+        var background = Vector4.Lerp(new Vector4(0.12f, 0.15f, 0.20f, 0.44f), new Vector4(0.18f, 0.26f, 0.40f, 0.96f), emphasis);
+        var border = Vector4.Lerp(new Vector4(0.26f, 0.31f, 0.39f, 0.42f), new Vector4(accent.X, accent.Y, accent.Z, 0.82f), emphasis);
         var textColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0.93f, 0.95f, 0.98f, 1f));
         var detailColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(MutedTextColor, accent, 0.35f));
         var badgeColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(new Vector4(accent.X, accent.Y, accent.Z, 0.75f), accent, emphasis));
+        var titleSize = ImGui.CalcTextSize(title);
+        var detailSize = hasDetail ? ImGui.CalcTextSize(detail) : Vector2.Zero;
+        var hasBadge = !string.IsNullOrWhiteSpace(badge);
+        var badgeSize = hasBadge ? ImGui.CalcTextSize(badge) : Vector2.Zero;
 
-        drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 10f);
-        drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 10f, ImDrawFlags.None, 1f);
+        drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 2f);
+        drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 2f, ImDrawFlags.None, 1f);
 
         if (emphasis > 0.02f)
         {
@@ -1808,14 +2017,32 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 2f);
         }
 
-        drawList.AddText(min + new Vector2(18f, 8f), textColor, title);
-        drawList.AddText(min + new Vector2(18f, 27f), detailColor, detail);
+        var contentHeight = hasDetail ? (lineHeight * 2f) + 3f : lineHeight;
+        var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
+        var textBlockWidth = MathF.Max(titleSize.X, detailSize.X);
+        var contentLeft = min.X + 16f;
+        var contentRight = hasBadge ? max.X - badgeSize.X - 24f : max.X - 16f;
+        var availableWidth = MathF.Max(0f, contentRight - contentLeft);
+        var textX = centerText
+            ? contentLeft + MathF.Max(0f, (availableWidth - textBlockWidth) * 0.5f)
+            : contentLeft;
+        var titleX = centerText ? textX + MathF.Max(0f, (textBlockWidth - titleSize.X) * 0.5f) : textX;
 
-        if (!string.IsNullOrWhiteSpace(badge))
+        drawList.AddText(new Vector2(titleX, textStartY), textColor, title);
+
+        if (hasDetail)
         {
-            var badgeSize = ImGui.CalcTextSize(badge);
+            var detailX = centerText
+                ? textX + MathF.Max(0f, (textBlockWidth - detailSize.X) * 0.5f)
+                : textX;
+            drawList.AddText(new Vector2(detailX, textStartY + lineHeight + 3f), detailColor, detail);
+        }
+
+        if (hasBadge)
+        {
             var badgeX = max.X - badgeSize.X - 14f;
-            drawList.AddText(new Vector2(badgeX, min.Y + 16f), badgeColor, badge);
+            var badgeY = min.Y + MathF.Max(8f, (rowHeight - badgeSize.Y) * 0.5f);
+            drawList.AddText(new Vector2(badgeX, badgeY), badgeColor, badge);
         }
 
         return clicked;
@@ -1828,10 +2055,16 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.Spacing();
     }
 
+    private static void RenderCompactKeyValue(string label, string value)
+    {
+        ImGui.TextDisabled(label);
+        ImGui.TextWrapped(value);
+    }
+
     private static void RenderCallout(string title, string message, Vector4 accent)
     {
-        ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.11f, 0.14f, 0.19f, 1f));
-        ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(accent.X, accent.Y, accent.Z, 0.45f));
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.12f, 0.16f, 0.22f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(accent.X, accent.Y, accent.Z, 0.60f));
         ImGui.BeginChild($"Callout::{title}", new Vector2(0f, 94f), ImGuiChildFlags.Borders, PanelWindowFlags);
         ImGui.TextColored(accent, title);
         ImGui.TextWrapped(message);
@@ -1962,39 +2195,42 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
 
         var style = ImGui.GetStyle();
-        style.WindowRounding = 10f;
-        style.ChildRounding = 10f;
-        style.FrameRounding = 8f;
-        style.PopupRounding = 8f;
-        style.GrabRounding = 8f;
-        style.ScrollbarRounding = 8f;
-        style.TabRounding = 8f;
-        style.FramePadding = new Vector2(10f, 7f);
-        style.ItemSpacing = new Vector2(10f, 10f);
-        style.ItemInnerSpacing = new Vector2(8f, 6f);
+        style.WindowRounding = 2f;
+        style.ChildRounding = 2f;
+        style.FrameRounding = 2f;
+        style.PopupRounding = 2f;
+        style.GrabRounding = 2f;
+        style.ScrollbarRounding = 2f;
+        style.TabRounding = 2f;
+        style.FramePadding = new Vector2(9f, 6f);
+        style.ItemSpacing = new Vector2(10f, 9f);
+        style.ItemInnerSpacing = new Vector2(8f, 5f);
+        style.AntiAliasedFill = true;
+        style.AntiAliasedLines = true;
+        style.AntiAliasedLinesUseTex = true;
 
         var colors = style.Colors;
-        colors[(int)ImGuiCol.WindowBg] = new Vector4(0.07f, 0.09f, 0.12f, 1f);
-        colors[(int)ImGuiCol.ChildBg] = new Vector4(0.10f, 0.12f, 0.16f, 1f);
-        colors[(int)ImGuiCol.PopupBg] = new Vector4(0.09f, 0.11f, 0.15f, 0.98f);
-        colors[(int)ImGuiCol.Border] = new Vector4(0.18f, 0.22f, 0.29f, 1f);
-        colors[(int)ImGuiCol.FrameBg] = new Vector4(0.13f, 0.17f, 0.23f, 1f);
-        colors[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.18f, 0.24f, 0.33f, 1f);
-        colors[(int)ImGuiCol.FrameBgActive] = new Vector4(0.21f, 0.30f, 0.41f, 1f);
-        colors[(int)ImGuiCol.TitleBg] = new Vector4(0.08f, 0.10f, 0.14f, 1f);
-        colors[(int)ImGuiCol.TitleBgActive] = new Vector4(0.08f, 0.10f, 0.14f, 1f);
-        colors[(int)ImGuiCol.MenuBarBg] = new Vector4(0.09f, 0.11f, 0.15f, 1f);
-        colors[(int)ImGuiCol.Button] = new Vector4(0.17f, 0.24f, 0.34f, 1f);
-        colors[(int)ImGuiCol.ButtonHovered] = new Vector4(0.23f, 0.32f, 0.46f, 1f);
-        colors[(int)ImGuiCol.ButtonActive] = new Vector4(0.28f, 0.38f, 0.55f, 1f);
-        colors[(int)ImGuiCol.Header] = new Vector4(0.19f, 0.27f, 0.39f, 1f);
-        colors[(int)ImGuiCol.HeaderHovered] = new Vector4(0.24f, 0.34f, 0.49f, 1f);
-        colors[(int)ImGuiCol.HeaderActive] = new Vector4(0.28f, 0.39f, 0.57f, 1f);
+        colors[(int)ImGuiCol.WindowBg] = new Vector4(0.04f, 0.05f, 0.08f, 1f);
+        colors[(int)ImGuiCol.ChildBg] = new Vector4(0.11f, 0.14f, 0.20f, 1f);
+        colors[(int)ImGuiCol.PopupBg] = new Vector4(0.12f, 0.16f, 0.23f, 0.99f);
+        colors[(int)ImGuiCol.Border] = new Vector4(0.30f, 0.37f, 0.49f, 1f);
+        colors[(int)ImGuiCol.FrameBg] = new Vector4(0.12f, 0.17f, 0.25f, 1f);
+        colors[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.18f, 0.25f, 0.37f, 1f);
+        colors[(int)ImGuiCol.FrameBgActive] = new Vector4(0.24f, 0.33f, 0.48f, 1f);
+        colors[(int)ImGuiCol.TitleBg] = new Vector4(0.06f, 0.08f, 0.12f, 1f);
+        colors[(int)ImGuiCol.TitleBgActive] = new Vector4(0.06f, 0.08f, 0.12f, 1f);
+        colors[(int)ImGuiCol.MenuBarBg] = new Vector4(0.08f, 0.11f, 0.17f, 1f);
+        colors[(int)ImGuiCol.Button] = new Vector4(0.20f, 0.29f, 0.43f, 1f);
+        colors[(int)ImGuiCol.ButtonHovered] = new Vector4(0.28f, 0.40f, 0.58f, 1f);
+        colors[(int)ImGuiCol.ButtonActive] = new Vector4(0.34f, 0.48f, 0.68f, 1f);
+        colors[(int)ImGuiCol.Header] = new Vector4(0.17f, 0.25f, 0.37f, 1f);
+        colors[(int)ImGuiCol.HeaderHovered] = new Vector4(0.24f, 0.35f, 0.51f, 1f);
+        colors[(int)ImGuiCol.HeaderActive] = new Vector4(0.31f, 0.44f, 0.64f, 1f);
         colors[(int)ImGuiCol.CheckMark] = new Vector4(0.65f, 0.83f, 1f, 1f);
         colors[(int)ImGuiCol.SliderGrab] = new Vector4(0.40f, 0.61f, 0.90f, 1f);
         colors[(int)ImGuiCol.SliderGrabActive] = new Vector4(0.47f, 0.69f, 0.97f, 1f);
-        colors[(int)ImGuiCol.Separator] = new Vector4(0.18f, 0.22f, 0.29f, 1f);
-        colors[(int)ImGuiCol.Text] = new Vector4(0.93f, 0.95f, 0.98f, 1f);
+        colors[(int)ImGuiCol.Separator] = new Vector4(0.28f, 0.34f, 0.44f, 1f);
+        colors[(int)ImGuiCol.Text] = new Vector4(0.95f, 0.97f, 1.00f, 1f);
         colors[(int)ImGuiCol.TextDisabled] = MutedTextColor;
     }
 
