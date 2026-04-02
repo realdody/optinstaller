@@ -25,7 +25,7 @@ public class ConfigurationService
             try
             {
                 using var stream = File.OpenRead(_configPath);
-                CurrentConfig = await JsonSerializer.DeserializeAsync<AppConfig>(stream) ?? new AppConfig();
+                CurrentConfig = await JsonSerializer.DeserializeAsync(stream, ConfigurationServiceJsonContext.Default.AppConfig) ?? new AppConfig();
             }
             catch
             {
@@ -39,7 +39,7 @@ public class ConfigurationService
         try
         {
             using var stream = File.Create(_configPath);
-            await JsonSerializer.SerializeAsync(stream, CurrentConfig, new JsonSerializerOptions { WriteIndented = true });
+            await JsonSerializer.SerializeAsync(stream, CurrentConfig, ConfigurationServiceJsonContext.Default.AppConfig);
         }
         catch
         {

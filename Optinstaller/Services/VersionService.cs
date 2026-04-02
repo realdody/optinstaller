@@ -14,6 +14,7 @@ namespace Optinstaller.Services;
 
 public class VersionService
 {
+    private static readonly HttpClient SharedHttpClient = CreateHttpClient();
     private readonly string[] _gitHubApiUrls = 
     {
         "https://api.github.com/repos/OptiScaler/OptiScaler/releases",
@@ -30,8 +31,14 @@ public class VersionService
             Directory.CreateDirectory(_versionsDirectory);
         }
 
-        _httpClient = new HttpClient();
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Optinstaller/1.0 (OptiScaler Manager)");
+        _httpClient = SharedHttpClient;
+    }
+
+    private static HttpClient CreateHttpClient()
+    {
+        var httpClient = new HttpClient();
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Optinstaller/1.0 (OptiScaler Manager)");
+        return httpClient;
     }
 
     public async Task<List<OptiScalerVersion>> GetAvailableVersionsAsync()
@@ -45,7 +52,7 @@ public class VersionService
             {
                 try
                 {
-                    var releases = await _httpClient.GetFromJsonAsync<List<GitHubRelease>>(url);
+                    var releases = await _httpClient.GetFromJsonAsync(url, VersionServiceJsonContext.Default.ListGitHubRelease);
                     if (releases != null)
                     {
                         foreach (var release in releases)
@@ -275,41 +282,65 @@ public class VersionService
 
     private static void SetSevenZipLibraryPath()
     {
-        // SharpSevenZip needs the path to 7z.dll
-        // It's bundled with the package, but we need to set the path based on architecture
-        var assemblyPath = Path.GetDirectoryName(typeof(SharpSevenZipExtractor).Assembly.Location) 
-                          ?? AppDomain.CurrentDomain.BaseDirectory;
-        
-        string libName;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        var assemblyPath = AppDomain.CurrentDomain.BaseDirectory;
+
+        var candidatePaths = GetSevenZipLibraryCandidatePaths(assemblyPath);
+        var libPath = candidatePaths.FirstOrDefault(File.Exists);
+        if (libPath == null)
         {
-            libName = RuntimeInformation.ProcessArchitecture switch
-            {
-                Architecture.X64 => "7z64.dll",
-                Architecture.X86 => "7z.dll",
-                Architecture.Arm64 => "7z64.dll",
-                _ => "7z64.dll"
-            };
-        }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            libName = "lib7z.so";
-        }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            libName = "lib7z.dylib";
-        }
-        else
-        {
-            libName = "7z64.dll"; // fallback
+            throw new FileNotFoundException($"Could not locate the SharpSevenZip native library. Searched: {string.Join(", ", candidatePaths)}");
         }
 
-        var libPath = Path.Combine(assemblyPath, libName);
-        if (File.Exists(libPath))
+        SharpSevenZipBase.SetLibraryPath(libPath);
+    }
+
+    private static string[] GetSevenZipLibraryCandidatePaths(string assemblyPath)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            SharpSevenZipBase.SetLibraryPath(libPath);
+            return RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X86 =>
+                [
+                    Path.Combine(assemblyPath, "x86", "7z.dll"),
+                    Path.Combine(assemblyPath, "7z.dll")
+                ],
+                Architecture.X64 =>
+                [
+                    Path.Combine(assemblyPath, "x64", "7z.dll"),
+                    Path.Combine(assemblyPath, "7z64.dll"),
+                    Path.Combine(assemblyPath, "7z.dll")
+                ],
+                Architecture.Arm64 =>
+                [
+                    Path.Combine(assemblyPath, "x64", "7z.dll"),
+                    Path.Combine(assemblyPath, "7z64.dll"),
+                    Path.Combine(assemblyPath, "7z.dll")
+                ],
+                _ =>
+                [
+                    Path.Combine(assemblyPath, "x64", "7z.dll"),
+                    Path.Combine(assemblyPath, "7z64.dll"),
+                    Path.Combine(assemblyPath, "7z.dll")
+                ]
+            };
         }
-        // If lib doesn't exist at expected path, SharpSevenZip will try to find it automatically
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return [Path.Combine(assemblyPath, "lib7z.so")];
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return [Path.Combine(assemblyPath, "lib7z.dylib")];
+        }
+
+        return
+        [
+            Path.Combine(assemblyPath, "7z64.dll"),
+            Path.Combine(assemblyPath, "7z.dll")
+        ];
     }
 
     private static bool IsPathWithinDirectory(string path, string directory)
@@ -397,33 +428,34 @@ public class VersionService
         version.LocalPath = string.Empty;
     }
 
-    private class GitHubRelease
-    {
-        [JsonPropertyName("tag_name")]
-        public string TagName { get; set; } = "";
+}
 
-        [JsonPropertyName("name")]
-        public string? Name { get; set; }
+internal sealed class GitHubRelease
+{
+    [JsonPropertyName("tag_name")]
+    public string TagName { get; set; } = "";
 
-        [JsonPropertyName("body")]
-        public string Description { get; set; } = "";
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
 
-        [JsonPropertyName("published_at")]
-        public DateTime PublishedAt { get; set; }
+    [JsonPropertyName("body")]
+    public string Description { get; set; } = "";
 
-        [JsonPropertyName("assets")]
-        public List<GitHubAsset>? Assets { get; set; }
-    }
+    [JsonPropertyName("published_at")]
+    public DateTime PublishedAt { get; set; }
 
-    private class GitHubAsset
-    {
-        [JsonPropertyName("name")]
-        public string Name { get; set; } = "";
+    [JsonPropertyName("assets")]
+    public List<GitHubAsset>? Assets { get; set; }
+}
 
-        [JsonPropertyName("browser_download_url")]
-        public string BrowserDownloadUrl { get; set; } = "";
+internal sealed class GitHubAsset
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
 
-        [JsonPropertyName("size")]
-        public long Size { get; set; }
-    }
+    [JsonPropertyName("browser_download_url")]
+    public string BrowserDownloadUrl { get; set; } = "";
+
+    [JsonPropertyName("size")]
+    public long Size { get; set; }
 }

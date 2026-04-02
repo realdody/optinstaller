@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using FluentAvalonia.UI.Controls;
 using Optinstaller.Models;
 using Optinstaller.Services;
 
@@ -39,13 +38,10 @@ public partial class InstallationWizardViewModel : ViewModelBase
     
     [ObservableProperty] private bool _checkingOptiPatcher;
     [ObservableProperty] 
-    [NotifyPropertyChangedFor(nameof(OptiPatcherSeverity))]
     private bool _optiPatcherSupported;
     [ObservableProperty] private bool _useOptiPatcher;
     [ObservableProperty] private string _optiPatcherStatus = "Checking compatibility...";
-    
-    public InfoBarSeverity OptiPatcherSeverity => OptiPatcherSupported ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
-    
+
     [ObservableProperty] private bool _createUninstaller = true;
     [ObservableProperty] private bool _isInstalling;
     [ObservableProperty] private string _installStatus = "";
@@ -173,7 +169,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task Next()
+    public async Task Next()
     {
         if (IsInstalling) return;
 
@@ -249,7 +245,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void Back()
+    public void Back()
     {
         if (StepIndex > 0)
         {
@@ -263,13 +259,13 @@ public partial class InstallationWizardViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void Close()
+    public void Close()
     {
         RequestClose?.Invoke(this, EventArgs.Empty);
     }
 
     [RelayCommand]
-    private void ForceOptiPatcher()
+    public void ForceOptiPatcher()
     {
         OptiPatcherSupported = true;
         UseOptiPatcher = true;
