@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>OptiManager</AssemblyName>
+    <Product>OptiManager</Product>
+    <Title>OptiManager</Title>
+    <RootNamespace>Optinstaller</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Models\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
+    <PackageReference Include="SharpSevenZip" Version="2.0.35" />
+    <PackageReference Include="System.Management" Version="10.0.2" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+
+  <!-- SharpSevenZip native library deployment -->
+  <!-- Native runtime assets for Windows x86/x64 are automatically copied by the Content items below -->
+  <ItemGroup>
+    <!-- Native runtime assets for Windows x86/x64 -->
+    <Content Include="$(NuGetPackageRoot)\sharpsevenzip\2.0.35\runtimes\win-x86\native\7z.dll" Condition="Exists('$(NuGetPackageRoot)\sharpsevenzip\2.0.35\runtimes\win-x86\native\7z.dll')">
+      <Link>x86\7z.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+    <Content Include="$(NuGetPackageRoot)\sharpsevenzip\2.0.35\runtimes\win-x64\native\7z.dll" Condition="Exists('$(NuGetPackageRoot)\sharpsevenzip\2.0.35\runtimes\win-x64\native\7z.dll')">
+      <Link>x64\7z.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
+</Project>

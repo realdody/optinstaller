@@ -1,19 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using ImGuiNET;
 using Optinstaller.Models;
 using Optinstaller.Platform;
 using Optinstaller.ViewModels;
-using Silk.NET.Core.Contexts;
-using Silk.NET.Input;
-using Silk.NET.Maths;
-using Silk.NET.OpenGL;
-using Silk.NET.OpenGL.Extensions.ImGui;
-using Silk.NET.Windowing;
 
 namespace Optinstaller.UI;
 
@@ -31,14 +28,22 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private static readonly Vector4 WarningColor = new(1.00f, 0.80f, 0.34f, 1f);
     private static readonly Vector4 ErrorColor = new(1.00f, 0.50f, 0.50f, 1f);
     private static readonly Vector4 MutedTextColor = new(0.69f, 0.73f, 0.80f, 1f);
+    private static readonly Win32Native.WndProcDelegate WindowProcedureDelegate = WindowProcedure;
 
     private readonly UiSynchronizationContext _syncContext;
     private readonly MainWindowViewModel _mainViewModel = new();
-    private readonly IWindow _window;
+    private readonly string _windowClassName = $"OptinstallerWindowClass_{Guid.NewGuid():N}";
+    private const string WindowTitle = "OptiManager";
+    private GCHandle _selfHandle;
+    private nint _hInstance;
+    private nint _hwnd;
+    private bool _classRegistered;
+    private bool _isRunning;
+    private bool _isMinimized;
+    private int _windowWidth = 1440;
+    private int _windowHeight = 900;
 
-    private GL? _gl;
-    private IInputContext? _input;
-    private ImGuiController? _imgui;
+    private Dx11ImGuiRenderer? _renderer;
     private bool _disposed;
 
     private AppPage _currentPage = AppPage.Dashboard;
@@ -67,29 +72,70 @@ public sealed class OptinstallerImGuiApp : IDisposable
     public OptinstallerImGuiApp(UiSynchronizationContext syncContext)
     {
         _syncContext = syncContext;
+        _selfHandle = GCHandle.Alloc(this);
+        _hInstance = Win32Native.GetModuleHandle(null);
 
-        var options = WindowOptions.Default with
-        {
-            Title = "Optinstaller",
-            Size = new Vector2D<int>(1440, 900),
-            API = new GraphicsAPI(
-                ContextAPI.OpenGL,
-                ContextProfile.Core,
-                ContextFlags.ForwardCompatible,
-                new APIVersion(3, 3)),
-        };
-
-        _window = Window.Create(options);
-        _window.Load += OnLoad;
-        _window.Update += OnUpdate;
-        _window.Render += OnRender;
-        _window.FramebufferResize += OnFramebufferResize;
-        _window.Closing += OnClosing;
+        RegisterWindowClass();
+        CreateWindow();
+        _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, ApplyTheme);
     }
 
     public void Run()
     {
-        _window.Run();
+        _isRunning = true;
+        Win32Native.ShowWindow(_hwnd, Win32Native.SW_SHOWDEFAULT);
+        Win32Native.UpdateWindow(_hwnd);
+
+        _ = InitializeAsync();
+
+        var stopwatch = Stopwatch.StartNew();
+        var lastFrameTime = stopwatch.Elapsed;
+
+        while (_isRunning)
+        {
+            while (Win32Native.PeekMessage(out var message, IntPtr.Zero, 0, 0, Win32Native.PM_REMOVE))
+            {
+                if (message.message == Win32Native.WM_QUIT)
+                {
+                    _isRunning = false;
+                    break;
+                }
+
+                Win32Native.TranslateMessage(ref message);
+                Win32Native.DispatchMessage(ref message);
+            }
+
+            if (!_isRunning)
+            {
+                break;
+            }
+
+            if (_isMinimized)
+            {
+                Thread.Sleep(16);
+                continue;
+            }
+
+            var currentFrameTime = stopwatch.Elapsed;
+            var delta = (float)(currentFrameTime - lastFrameTime).TotalSeconds;
+            lastFrameTime = currentFrameTime;
+
+            RenderFrame(delta);
+        }
+    }
+
+    private void RenderFrame(float delta)
+    {
+        if (_renderer == null || _isMinimized)
+        {
+            return;
+        }
+
+        _uiTime += delta;
+        _syncContext.Pump();
+        _renderer.BeginFrame(delta, _windowWidth, _windowHeight);
+        RenderUi();
+        _renderer.Render(new Vector4(0.04f, 0.05f, 0.08f, 1f));
     }
 
     public void Dispose()
@@ -100,22 +146,28 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         _disposed = true;
-        _imgui?.Dispose();
-        _input?.Dispose();
-        _window.Dispose();
+        _renderer?.Dispose();
+
+        if (_hwnd != IntPtr.Zero)
+        {
+            Win32Native.DestroyWindow(_hwnd);
+            _hwnd = IntPtr.Zero;
+        }
+
+        if (_classRegistered)
+        {
+            Win32Native.UnregisterClass(_windowClassName, _hInstance);
+            _classRegistered = false;
+        }
+
+        if (_selfHandle.IsAllocated)
+        {
+            _selfHandle.Free();
+        }
     }
 
-    private async void OnLoad()
+    private async Task InitializeAsync()
     {
-        _gl = _window.CreateOpenGL();
-        _input = _window.CreateInput();
-        _imgui = new ImGuiController(_gl, _window, _input, CreateFontConfig(), ConfigureImGuiIo);
-
-        _gl.ClearColor(0.07f, 0.09f, 0.12f, 1f);
-        _gl.Viewport(_window.FramebufferSize);
-
-        ApplyTheme();
-
         try
         {
             await _mainViewModel.InitializeAsync();
@@ -126,38 +178,166 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
     }
 
-    private void OnUpdate(double delta)
+    private void RegisterWindowClass()
     {
-        _uiTime += (float)delta;
-        _syncContext.Pump();
-        _imgui?.Update((float)delta);
-    }
-
-    private void OnRender(double delta)
-    {
-        _ = delta;
-
-        if (_gl == null || _imgui == null)
+        var windowClass = new Win32Native.WNDCLASSEXW
         {
-            return;
+            cbSize = (uint)Marshal.SizeOf<Win32Native.WNDCLASSEXW>(),
+            style = Win32Native.CS_HREDRAW | Win32Native.CS_VREDRAW | Win32Native.CS_OWNDC,
+            lpfnWndProc = WindowProcedureDelegate,
+            hInstance = _hInstance,
+            hCursor = Win32Native.LoadCursor(IntPtr.Zero, (nint)Win32Native.IDC_ARROW),
+            lpszClassName = _windowClassName,
+        };
+
+        if (Win32Native.RegisterClassEx(ref windowClass) == 0)
+        {
+            throw new InvalidOperationException($"RegisterClassEx failed: {Marshal.GetLastWin32Error()}");
         }
 
-        _syncContext.Pump();
-
-        _gl.Clear((uint)ClearBufferMask.ColorBufferBit);
-
-        RenderUi();
-        _imgui.Render();
+        _classRegistered = true;
     }
 
-    private void OnFramebufferResize(Vector2D<int> size)
+    private void CreateWindow()
     {
-        _gl?.Viewport(size);
+        var windowRect = new Win32Native.RECT
+        {
+            Left = 0,
+            Top = 0,
+            Right = _windowWidth,
+            Bottom = _windowHeight,
+        };
+
+        Win32Native.AdjustWindowRectEx(ref windowRect, Win32Native.WS_OVERLAPPEDWINDOW, false, 0);
+
+        _hwnd = Win32Native.CreateWindowEx(
+            0,
+            _windowClassName,
+            WindowTitle,
+            Win32Native.WS_OVERLAPPEDWINDOW | Win32Native.WS_VISIBLE,
+            Win32Native.CW_USEDEFAULT,
+            Win32Native.CW_USEDEFAULT,
+            windowRect.Right - windowRect.Left,
+            windowRect.Bottom - windowRect.Top,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            _hInstance,
+            GCHandle.ToIntPtr(_selfHandle));
+
+        if (_hwnd == IntPtr.Zero)
+        {
+            throw new InvalidOperationException($"CreateWindowEx failed: {Marshal.GetLastWin32Error()}");
+        }
+
+        Win32Native.SetWindowText(_hwnd, WindowTitle);
+
+        if (Win32Native.GetClientRect(_hwnd, out var clientRect))
+        {
+            _windowWidth = Math.Max(1, clientRect.Right - clientRect.Left);
+            _windowHeight = Math.Max(1, clientRect.Bottom - clientRect.Top);
+        }
     }
 
-    private void OnClosing()
+    private static nint WindowProcedure(nint hwnd, uint msg, nuint wParam, nint lParam)
     {
-        Dispose();
+        if (msg == Win32Native.WM_NCCREATE)
+        {
+            var createStruct = Marshal.PtrToStructure<Win32Native.CREATESTRUCTW>(lParam);
+            Win32Native.SetWindowLongPtr(hwnd, Win32Native.GWLP_USERDATA, createStruct.lpCreateParams);
+        }
+
+        var userData = Win32Native.GetWindowLongPtr(hwnd, Win32Native.GWLP_USERDATA);
+        if (userData != IntPtr.Zero)
+        {
+            var handle = GCHandle.FromIntPtr(userData);
+            if (handle.Target is OptinstallerImGuiApp app)
+            {
+                return app.HandleWindowMessage(hwnd, msg, wParam, lParam);
+            }
+        }
+
+        return msg == Win32Native.WM_NCCREATE ? 1 : Win32Native.DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    private nint HandleWindowMessage(nint hwnd, uint msg, nuint wParam, nint lParam)
+    {
+        if (_renderer?.HandleMessage(msg, wParam, lParam) == true)
+        {
+            return 0;
+        }
+
+        switch (msg)
+        {
+            case Win32Native.WM_ERASEBKGND:
+                return 1;
+
+            case Win32Native.WM_SYSCOMMAND when ((uint)wParam & 0xFFF0) == Win32Native.SC_KEYMENU:
+                return 0;
+
+            case Win32Native.WM_ENTERSIZEMOVE:
+                return 0;
+
+            case Win32Native.WM_EXITSIZEMOVE:
+                Win32Native.InvalidateRect(hwnd, IntPtr.Zero, false);
+                Win32Native.UpdateWindow(hwnd);
+                return 0;
+
+            case Win32Native.WM_SIZING:
+                Win32Native.InvalidateRect(hwnd, IntPtr.Zero, false);
+                Win32Native.UpdateWindow(hwnd);
+                break;
+
+            case Win32Native.WM_SIZE:
+                if ((uint)wParam == Win32Native.SIZE_MINIMIZED)
+                {
+                    _isMinimized = true;
+                    return 0;
+                }
+
+                _isMinimized = false;
+                var width = Win32Native.GetXFromLParam(lParam);
+                var height = Win32Native.GetYFromLParam(lParam);
+                if (width > 0 && height > 0)
+                {
+                    _windowWidth = width;
+                    _windowHeight = height;
+                    _renderer?.Resize(width, height);
+                    Win32Native.InvalidateRect(hwnd, IntPtr.Zero, false);
+                }
+                return 0;
+
+            case Win32Native.WM_PAINT:
+                var paint = Win32Native.BeginPaint(hwnd, out var paintStruct);
+                if (paint != IntPtr.Zero)
+                {
+                    if (!_isMinimized)
+                    {
+                        RenderFrame(1f / 60f);
+                    }
+
+                    Win32Native.EndPaint(hwnd, ref paintStruct);
+                }
+                return 0;
+
+            case Win32Native.WM_CLOSE:
+                _isRunning = false;
+                Win32Native.DestroyWindow(hwnd);
+                return 0;
+
+            case Win32Native.WM_DESTROY:
+                Win32Native.PostQuitMessage(0);
+                return 0;
+        }
+
+        return Win32Native.DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    private void RequestClose()
+    {
+        if (_hwnd != IntPtr.Zero)
+        {
+            Win32Native.PostMessage(_hwnd, Win32Native.WM_CLOSE, 0, IntPtr.Zero);
+        }
     }
 
     private void RenderUi()
@@ -219,7 +399,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
             if (ImGui.MenuItem("Quit"))
             {
-                _window.Close();
+                RequestClose();
             }
 
             ImGui.EndMenu();
@@ -233,7 +413,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16f, 14f));
         ImGui.BeginChild("Sidebar", new Vector2(248f, 0f), PaddedPanelChildFlags, PanelWindowFlags);
 
-        ImGui.TextColored(InfoColor, "OPTINSTALLER");
+        ImGui.TextColored(InfoColor, "OPTIMANAGER");
         TextMuted("OptiScaler manager");
         ImGui.Spacing();
         ImGui.SeparatorText("Pages");
@@ -817,13 +997,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
         if (ImGui.BeginTable("RuntimeSummaryTop", 3, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
         {
             ImGui.TableNextColumn();
-            RenderCompactKeyValue("UI Host", "Dear ImGui + Silk.NET + OpenGL");
+            RenderCompactKeyValue("UI Host", "Dear ImGui + Win32 + Direct3D 11");
 
             ImGui.TableNextColumn();
             RenderCompactKeyValue("Framework", Environment.Version.ToString());
 
             ImGui.TableNextColumn();
-            RenderCompactKeyValue("Window Size", $"{_window.Size.X} x {_window.Size.Y}");
+            RenderCompactKeyValue("Window Size", $"{_windowWidth} x {_windowHeight}");
 
             ImGui.EndTable();
         }
@@ -960,12 +1140,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
         return normalized.Trim();
     }
 
-    private static ImGuiFontConfig? CreateFontConfig()
+    private static void LoadFonts(ImGuiIOPtr io)
     {
         var bundledHackFont = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "Hack-Regular.ttf");
         if (File.Exists(bundledHackFont))
         {
-            return new ImGuiFontConfig(bundledHackFont, 16, io => io.Fonts.GetGlyphRangesDefault());
+            io.Fonts.AddFontFromFileTTF(bundledHackFont, 16f);
+            return;
         }
 
         var fontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
@@ -982,16 +1163,16 @@ public sealed class OptinstallerImGuiApp : IDisposable
             var fontPath = Path.Combine(fontsDirectory, fontFile);
             if (File.Exists(fontPath))
             {
-                return new ImGuiFontConfig(fontPath, 16, io => io.Fonts.GetGlyphRangesDefault());
+                io.Fonts.AddFontFromFileTTF(fontPath, 16f);
+                return;
             }
         }
 
-        return null;
+        io.Fonts.AddFontDefault();
     }
 
-    private static void ConfigureImGuiIo()
+    private static void ConfigureImGuiIo(ImGuiIOPtr io)
     {
-        var io = ImGui.GetIO();
         io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
         io.FontGlobalScale = 1.0f;
     }
