@@ -338,8 +338,8 @@ float4 main(PS_INPUT input) : SV_Target
 
     private void CreateDeviceObjects()
     {
-        var vertexShaderBytecode = Compiler.Compile(VertexShaderSource, "main", "ImGuiVertexShader.hlsl", "vs_4_0", ShaderFlags.EnableStrictness, EffectFlags.None);
-        var pixelShaderBytecode = Compiler.Compile(PixelShaderSource, "main", "ImGuiPixelShader.hlsl", "ps_4_0", ShaderFlags.EnableStrictness, EffectFlags.None);
+        var vertexShaderBytecode = CompileShader(VertexShaderSource, "main", "ImGuiVertexShader.hlsl", "vs_4_0");
+        var pixelShaderBytecode = CompileShader(PixelShaderSource, "main", "ImGuiPixelShader.hlsl", "ps_4_0");
 
         _vertexShader = _device!.CreateVertexShader(vertexShaderBytecode.Span);
         _pixelShader = _device!.CreatePixelShader(pixelShaderBytecode.Span);
@@ -373,6 +373,24 @@ float4 main(PS_INPUT input) : SV_Target
         _fontSampler = _device.CreateSamplerState(SamplerDescription.LinearClamp);
 
         CreateFontTexture();
+    }
+
+    private static ReadOnlyMemory<byte> CompileShader(string source, string entryPoint, string sourceName, string target)
+    {
+        try
+        {
+            var bytecode = Compiler.Compile(source, entryPoint, sourceName, target, ShaderFlags.EnableStrictness, EffectFlags.None);
+            if (bytecode.Length == 0)
+            {
+                throw new InvalidOperationException($"Shader compilation produced no bytecode for {sourceName} ({target}). D3DCompiler may be unavailable or the shader compilation failed without diagnostics.");
+            }
+
+            return bytecode;
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException)
+        {
+            throw new InvalidOperationException($"Failed to compile shader {sourceName} ({target}): {ex.Message}", ex);
+        }
     }
 
     private void CreateFontTexture()
