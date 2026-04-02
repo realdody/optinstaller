@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 
@@ -45,6 +46,11 @@ public sealed class UiSynchronizationContext : SynchronizationContext
             catch (Exception ex)
             {
                 item.Exception = ex;
+
+                if (item.Signal == null)
+                {
+                    Debug.WriteLine($"Unhandled exception in posted UI callback: {ex}");
+                }
             }
             finally
             {

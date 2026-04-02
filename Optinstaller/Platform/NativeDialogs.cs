@@ -8,10 +8,11 @@ public static class NativeDialogs
 {
     private const int MaxPath = 260;
 
-    public static string? PickFolder(string title)
+    public static string? PickFolder(string title, nint owner = 0)
     {
         var browseInfo = new BrowseInfo
         {
+            Owner = owner,
             Title = title,
             Flags = BrowseInfoFlags.ReturnOnlyFsDirs | BrowseInfoFlags.UseNewUi | BrowseInfoFlags.NoNewFolderButton,
         };

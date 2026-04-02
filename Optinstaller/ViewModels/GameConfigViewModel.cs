@@ -1,8 +1,8 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System;
+using System.Diagnostics;
 using System.IO;
-using System.Threading.Tasks;
 
 namespace Optinstaller.ViewModels;
 
@@ -74,8 +74,6 @@ public partial class GameConfigViewModel : ViewModelBase
     [RelayCommand]
     public void Save()
     {
-        if (!File.Exists(_configPath)) return;
-
         // Update raw content with new values (naive replace, ideal would be a proper parser)
         UpdateSetting("Dxgi", EnableSpoofing ? "auto" : "false");
         UpdateSetting("OverlayMenu", EnableOverlay ? "true" : "false");
@@ -118,24 +116,30 @@ public partial class GameConfigViewModel : ViewModelBase
         }
         else
         {
-            // Append to [Display] or general? Just append to end
-            _rawContent += $"{Environment.NewLine}{key}={value}";
+            _rawContent = string.IsNullOrEmpty(_rawContent)
+                ? $"{key}={value}"
+                : _rawContent + $"{Environment.NewLine}{key}={value}";
         }
     }
 
     [RelayCommand]
     public void OpenFile()
     {
+        if (!File.Exists(_configPath))
+        {
+            throw new FileNotFoundException($"The OptiScaler config file was not found: {_configPath}", _configPath);
+        }
+
         try
         {
-            new System.Diagnostics.Process
+            Process.Start(new ProcessStartInfo(_configPath)
             {
-                StartInfo = new System.Diagnostics.ProcessStartInfo(_configPath)
-                {
-                    UseShellExecute = true
-                }
-            }.Start();
+                UseShellExecute = true
+            });
         }
-        catch { }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to open the OptiScaler config file '{_configPath}'.", ex);
+        }
     }
 }

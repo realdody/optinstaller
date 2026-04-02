@@ -28,6 +28,7 @@ bld/
 # Project-specific
 Versions/
 config.json
+imgui.ini
 *.log
 
 # OS generated files

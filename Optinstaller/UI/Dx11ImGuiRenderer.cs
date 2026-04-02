@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -121,6 +122,25 @@ float4 main(PS_INPUT input) : SV_Target
 
         ImGui.DestroyContext();
 
+        var disposedTextures = new HashSet<ID3D11ShaderResourceView>();
+        foreach (var texture in _textures.Values)
+        {
+            if (disposedTextures.Add(texture))
+            {
+                texture.Dispose();
+            }
+        }
+
+        if (_fontShaderResourceView != null && disposedTextures.Add(_fontShaderResourceView))
+        {
+            _fontShaderResourceView.Dispose();
+        }
+
+        _textures.Clear();
+        _fontShaderResourceView = null;
+        _fontTextureId = 0;
+        _nextTextureId = 1;
+
         _vertexBuffer?.Dispose();
         _indexBuffer?.Dispose();
         _vertexConstantBuffer?.Dispose();
@@ -128,7 +148,6 @@ float4 main(PS_INPUT input) : SV_Target
         _vertexShader?.Dispose();
         _pixelShader?.Dispose();
         _fontSampler?.Dispose();
-        _fontShaderResourceView?.Dispose();
         _blendState?.Dispose();
         _rasterizerState?.Dispose();
         _depthStencilState?.Dispose();
@@ -396,13 +415,16 @@ float4 main(PS_INPUT input) : SV_Target
             return;
         }
 
-        if (drawData.TotalVtxCount <= 0)
+        if (drawData.TotalVtxCount <= 0 || drawData.TotalIdxCount <= 0)
         {
             return;
         }
 
         EnsureBuffers(drawData.TotalVtxCount, drawData.TotalIdxCount);
-        UploadBuffers(drawData);
+        if (!UploadBuffers(drawData))
+        {
+            return;
+        }
 
         var left = drawData.DisplayPos.X;
         var right = drawData.DisplayPos.X + drawData.DisplaySize.X;
@@ -506,30 +528,89 @@ float4 main(PS_INPUT input) : SV_Target
         }
     }
 
-    private void UploadBuffers(ImDrawDataPtr drawData)
+    private bool UploadBuffers(ImDrawDataPtr drawData)
     {
-        var mappedVertexBuffer = _deviceContext!.Map(_vertexBuffer!, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
-        var mappedIndexBuffer = _deviceContext.Map(_indexBuffer!, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
-
-        var vertexDestination = (ImDrawVert*)mappedVertexBuffer.DataPointer;
-        var indexDestination = (ushort*)mappedIndexBuffer.DataPointer;
-
-        for (var n = 0; n < drawData.CmdListsCount; n++)
+        if (_deviceContext == null || _vertexBuffer == null || _indexBuffer == null)
         {
-            var commandList = drawData.CmdLists[n];
-
-            var vertexBytes = commandList.VtxBuffer.Size * Unsafe.SizeOf<ImDrawVert>();
-            Buffer.MemoryCopy(commandList.VtxBuffer.Data.ToPointer(), vertexDestination, vertexBytes, vertexBytes);
-
-            var indexBytes = commandList.IdxBuffer.Size * sizeof(ushort);
-            Buffer.MemoryCopy(commandList.IdxBuffer.Data.ToPointer(), indexDestination, indexBytes, indexBytes);
-
-            vertexDestination += commandList.VtxBuffer.Size;
-            indexDestination += commandList.IdxBuffer.Size;
+            return false;
         }
 
-        _deviceContext.Unmap(_vertexBuffer!, 0);
-        _deviceContext.Unmap(_indexBuffer!, 0);
+        if (drawData.TotalVtxCount <= 0 || drawData.TotalIdxCount <= 0)
+        {
+            return false;
+        }
+
+        if (drawData.TotalVtxCount > _vertexBufferSize || drawData.TotalIdxCount > _indexBufferSize)
+        {
+            Debug.WriteLine($"Refusing to upload ImGui buffers larger than the allocated GPU buffers. Vertices: {drawData.TotalVtxCount}/{_vertexBufferSize}, indices: {drawData.TotalIdxCount}/{_indexBufferSize}.");
+            return false;
+        }
+
+        var vertexMapped = false;
+        var indexMapped = false;
+
+        try
+        {
+            var mappedVertexBuffer = _deviceContext.Map(_vertexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
+            vertexMapped = true;
+            var mappedIndexBuffer = _deviceContext.Map(_indexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
+            indexMapped = true;
+
+            if (mappedVertexBuffer.DataPointer == IntPtr.Zero || mappedIndexBuffer.DataPointer == IntPtr.Zero)
+            {
+                Debug.WriteLine("Failed to map one or both ImGui upload buffers.");
+                return false;
+            }
+
+            var vertexDestination = (ImDrawVert*)mappedVertexBuffer.DataPointer;
+            var indexDestination = (ushort*)mappedIndexBuffer.DataPointer;
+            var copiedVertexCount = 0;
+            var copiedIndexCount = 0;
+
+            for (var n = 0; n < drawData.CmdListsCount; n++)
+            {
+                var commandList = drawData.CmdLists[n];
+                if (commandList.VtxBuffer.Size < 0 || commandList.IdxBuffer.Size < 0)
+                {
+                    Debug.WriteLine("Encountered an ImGui command list with an invalid negative buffer size.");
+                    return false;
+                }
+
+                copiedVertexCount += commandList.VtxBuffer.Size;
+                copiedIndexCount += commandList.IdxBuffer.Size;
+
+                if (copiedVertexCount > drawData.TotalVtxCount || copiedIndexCount > drawData.TotalIdxCount)
+                {
+                    Debug.WriteLine("Refusing to upload ImGui buffers because the command list totals exceed the advertised draw data size.");
+                    return false;
+                }
+
+                var vertexBytes = commandList.VtxBuffer.Size * Unsafe.SizeOf<ImDrawVert>();
+                var remainingVertexBytes = (drawData.TotalVtxCount - (copiedVertexCount - commandList.VtxBuffer.Size)) * Unsafe.SizeOf<ImDrawVert>();
+                Buffer.MemoryCopy(commandList.VtxBuffer.Data.ToPointer(), vertexDestination, remainingVertexBytes, vertexBytes);
+
+                var indexBytes = commandList.IdxBuffer.Size * sizeof(ushort);
+                var remainingIndexBytes = (drawData.TotalIdxCount - (copiedIndexCount - commandList.IdxBuffer.Size)) * sizeof(ushort);
+                Buffer.MemoryCopy(commandList.IdxBuffer.Data.ToPointer(), indexDestination, remainingIndexBytes, indexBytes);
+
+                vertexDestination += commandList.VtxBuffer.Size;
+                indexDestination += commandList.IdxBuffer.Size;
+            }
+
+            return true;
+        }
+        finally
+        {
+            if (vertexMapped)
+            {
+                _deviceContext.Unmap(_vertexBuffer, 0);
+            }
+
+            if (indexMapped)
+            {
+                _deviceContext.Unmap(_indexBuffer, 0);
+            }
+        }
     }
 
     private static void UpdateModifiers(ImGuiIOPtr io)

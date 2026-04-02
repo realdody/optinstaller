@@ -40,6 +40,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private bool _classRegistered;
     private bool _isRunning;
     private bool _isMinimized;
+    private bool _isInSizeMove;
     private int _windowWidth = 1440;
     private int _windowHeight = 900;
 
@@ -105,6 +106,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 Win32Native.DispatchMessage(ref message);
             }
 
+            _syncContext.Pump();
+
             if (!_isRunning)
             {
                 break;
@@ -126,13 +129,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private void RenderFrame(float delta)
     {
-        if (_renderer == null || _isMinimized)
+        if (_renderer == null)
         {
             return;
         }
 
         _uiTime += delta;
-        _syncContext.Pump();
         _renderer.BeginFrame(delta, _windowWidth, _windowHeight);
         RenderUi();
         _renderer.Render(new Vector4(0.04f, 0.05f, 0.08f, 1f));
@@ -275,9 +277,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 return 0;
 
             case Win32Native.WM_ENTERSIZEMOVE:
+                _isInSizeMove = true;
                 return 0;
 
             case Win32Native.WM_EXITSIZEMOVE:
+                _isInSizeMove = false;
                 Win32Native.InvalidateRect(hwnd, IntPtr.Zero, false);
                 Win32Native.UpdateWindow(hwnd);
                 return 0;
@@ -310,7 +314,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 var paint = Win32Native.BeginPaint(hwnd, out var paintStruct);
                 if (paint != IntPtr.Zero)
                 {
-                    if (!_isMinimized)
+                    if (_isInSizeMove && !_isMinimized)
                     {
                         RenderFrame(1f / 60f);
                     }
@@ -1452,7 +1456,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private void PromptAddGame()
     {
-        var selectedPath = NativeDialogs.PickFolder("Select Game Directory");
+        var selectedPath = NativeDialogs.PickFolder("Select Game Directory", _hwnd);
         if (string.IsNullOrWhiteSpace(selectedPath))
         {
             return;
@@ -1675,16 +1679,30 @@ public sealed class OptinstallerImGuiApp : IDisposable
             ImGui.Spacing();
             if (ImGui.Button("Open File", new Vector2(110f, 0f)))
             {
-                _configDialog.ViewModel.OpenFile();
+                try
+                {
+                    _configDialog.ViewModel.OpenFile();
+                }
+                catch (Exception ex)
+                {
+                    SetNotification(ex.Message, NotificationKind.Error);
+                }
             }
 
             ImGui.SameLine();
             if (ImGui.Button("Save", new Vector2(110f, 0f)))
             {
-                _configDialog.ViewModel.Save();
-                SetNotification($"Saved configuration for {_configDialog.Game.Name}.", NotificationKind.Success);
-                ImGui.CloseCurrentPopup();
-                shouldClose = true;
+                try
+                {
+                    _configDialog.ViewModel.Save();
+                    SetNotification($"Saved configuration for {_configDialog.Game.Name}.", NotificationKind.Success);
+                    ImGui.CloseCurrentPopup();
+                    shouldClose = true;
+                }
+                catch (Exception ex)
+                {
+                    SetNotification(ex.Message, NotificationKind.Error);
+                }
             }
 
             ImGui.SameLine();

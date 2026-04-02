@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Messaging;
@@ -17,6 +18,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
     private readonly OptiScalerService _optiScalerService;
     private readonly VersionService _versionService;
     private readonly ConfigurationService _configService;
+    private readonly SemaphoreSlim _versionRefreshLock = new(1, 1);
 
     [ObservableProperty]
     private ObservableCollection<GameInstance> _games = new();
@@ -71,6 +73,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
     public async Task InitializeAsync()
     {
         await _configService.LoadAsync();
+        await NormalizeSavedGamePathsAsync();
         await RefreshVersions();
         LoadGames();
     }
@@ -89,21 +92,29 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     private async Task RefreshVersions()
     {
-        DownloadedVersions.Clear();
-        var allVersions = await _versionService.GetAvailableVersionsAsync();
-
-        foreach (var version in allVersions.Where(v => v.IsDownloaded))
+        await _versionRefreshLock.WaitAsync();
+        try
         {
-            DownloadedVersions.Add(version);
-        }
+            DownloadedVersions.Clear();
+            var allVersions = await _versionService.GetAvailableVersionsAsync();
 
-        if (SelectedVersion != null)
+            foreach (var version in allVersions.Where(v => v.IsDownloaded))
+            {
+                DownloadedVersions.Add(version);
+            }
+
+            if (SelectedVersion != null)
+            {
+                SelectedVersion = DownloadedVersions.FirstOrDefault(v =>
+                    v.TagName.Equals(SelectedVersion.TagName, StringComparison.OrdinalIgnoreCase));
+            }
+
+            SelectedVersion ??= DownloadedVersions.FirstOrDefault();
+        }
+        finally
         {
-            SelectedVersion = DownloadedVersions.FirstOrDefault(v =>
-                v.TagName.Equals(SelectedVersion.TagName, StringComparison.OrdinalIgnoreCase));
+            _versionRefreshLock.Release();
         }
-
-        SelectedVersion ??= DownloadedVersions.FirstOrDefault();
     }
 
     public async Task<bool> AddGameFromPath(string rawPath)
@@ -123,7 +134,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         AddGameInternal(normalizedPath);
 
         if (!_configService.CurrentConfig.SavedGamePaths.Any(path =>
-                path.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
+                NormalizeGamePath(path).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
         {
             _configService.CurrentConfig.SavedGamePaths.Add(normalizedPath);
             await _configService.SaveAsync();
@@ -134,19 +145,19 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     private void AddGameInternal(string path)
     {
-        var trimmedPath = NormalizeGamePath(path);
-        var dirName = Path.GetFileName(trimmedPath);
+        var normalizedPath = NormalizeGamePath(path);
+        var dirName = Path.GetFileName(normalizedPath);
         if (string.IsNullOrEmpty(dirName))
         {
-            dirName = trimmedPath;
+            dirName = normalizedPath;
         }
 
-        var isInstalled = _optiScalerService.IsInstalled(path, out var installedFilename, out var detectedVersion);
+        var isInstalled = _optiScalerService.IsInstalled(normalizedPath, out var installedFilename, out var detectedVersion);
 
         var game = new GameInstance
         {
             Name = dirName,
-            GamePath = path,
+            GamePath = normalizedPath,
             IsInstalled = isInstalled,
             InstalledFilename = installedFilename,
             CurrentVersion = isInstalled ? detectedVersion : "Not Installed"
@@ -190,12 +201,16 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             _optiScalerService.UpdateDll(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
         });
 
-        if (_optiScalerService.IsInstalled(game.GamePath, out _, out var newVersion))
+        if (_optiScalerService.IsInstalled(game.GamePath, out var installedFilename, out var newVersion))
         {
+            game.IsInstalled = true;
+            game.InstalledFilename = installedFilename;
             game.CurrentVersion = newVersion;
         }
         else
         {
+            game.IsInstalled = false;
+            game.InstalledFilename = string.Empty;
             game.CurrentVersion = selectedVersion.TagName;
         }
     }
@@ -231,17 +246,60 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             await UninstallOptiScaler(game);
         }
 
-        var path = game.GamePath;
+        var path = NormalizeGamePath(game.GamePath);
         Games.Remove(game);
 
         var savedPath = _configService.CurrentConfig.SavedGamePaths.FirstOrDefault(saved =>
-            saved.Equals(path, StringComparison.OrdinalIgnoreCase));
+            NormalizeGamePath(saved).Equals(path, StringComparison.OrdinalIgnoreCase));
 
         if (savedPath != null)
         {
             _configService.CurrentConfig.SavedGamePaths.Remove(savedPath);
             await _configService.SaveAsync();
         }
+    }
+
+    private async Task NormalizeSavedGamePathsAsync()
+    {
+        var normalizedPaths = new List<string>();
+        foreach (var savedPath in _configService.CurrentConfig.SavedGamePaths)
+        {
+            if (string.IsNullOrWhiteSpace(savedPath))
+            {
+                continue;
+            }
+
+            var normalizedPath = NormalizeGamePath(savedPath);
+            if (normalizedPaths.Any(path => path.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            normalizedPaths.Add(normalizedPath);
+        }
+
+        var currentPaths = _configService.CurrentConfig.SavedGamePaths;
+        var changed = currentPaths.Count != normalizedPaths.Count;
+        if (!changed)
+        {
+            for (var i = 0; i < currentPaths.Count; i++)
+            {
+                if (!currentPaths[i].Equals(normalizedPaths[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    changed = true;
+                    break;
+                }
+            }
+        }
+
+        if (!changed)
+        {
+            return;
+        }
+
+        currentPaths.Clear();
+        currentPaths.AddRange(normalizedPaths);
+        await _configService.SaveAsync();
     }
 
     private static string NormalizeGamePath(string path)
