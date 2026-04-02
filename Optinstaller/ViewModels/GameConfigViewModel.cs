@@ -72,7 +72,7 @@ public partial class GameConfigViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void Save()
+    public void Save()
     {
         if (!File.Exists(_configPath)) return;
 
@@ -124,7 +124,7 @@ public partial class GameConfigViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void OpenFile()
+    public void OpenFile()
     {
         try
         {

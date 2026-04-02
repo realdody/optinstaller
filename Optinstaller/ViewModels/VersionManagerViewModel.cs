@@ -96,7 +96,7 @@ public partial class VersionManagerViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task LoadVersions()
+    public async Task LoadVersions()
     {
         IsLoading = true;
         ErrorMessage = string.Empty;
@@ -125,13 +125,13 @@ public partial class VersionManagerViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void ClearSearch()
+    public void ClearSearch()
     {
         SearchQuery = string.Empty;
     }
 
     [RelayCommand]
-    private async Task DownloadVersion(OptiScalerVersion version)
+    public async Task DownloadVersion(OptiScalerVersion version)
     {
         if (version.IsDownloading) return;
 
@@ -187,7 +187,7 @@ public partial class VersionManagerViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task DeleteVersion(OptiScalerVersion version)
+    public async Task DeleteVersion(OptiScalerVersion version)
     {
         try
         {
@@ -202,7 +202,7 @@ public partial class VersionManagerViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void OpenFolder(OptiScalerVersion version)
+    public void OpenFolder(OptiScalerVersion version)
     {
         if (string.IsNullOrEmpty(version.LocalPath) || !System.IO.Directory.Exists(version.LocalPath))
         {
