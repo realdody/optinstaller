@@ -1,4 +1,4 @@
-# optinstaller
+# OptiManager
 An unofficial GUI installer for OptiScaler and its utilities.
 
 
