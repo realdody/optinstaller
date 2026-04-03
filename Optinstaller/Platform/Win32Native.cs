@@ -5,6 +5,25 @@ namespace Optinstaller.Platform;
 
 internal static class Win32Native
 {
+    private static readonly object DarkBackgroundBrushSync = new();
+    private static nint _darkBackgroundBrush;
+
+    internal static nint DarkBackgroundBrush
+    {
+        get
+        {
+            lock (DarkBackgroundBrushSync)
+            {
+                if (_darkBackgroundBrush == 0)
+                {
+                    _darkBackgroundBrush = CreateSolidBrush(ToColorRef(43, 46, 49));
+                }
+
+                return _darkBackgroundBrush;
+            }
+        }
+    }
+
     public const int CW_USEDEFAULT = unchecked((int)0x80000000);
 
     public const uint CS_HREDRAW = 0x0002;
@@ -12,9 +31,17 @@ internal static class Win32Native
     public const uint CS_OWNDC = 0x0020;
 
     public const int SW_SHOWDEFAULT = 10;
+    public const int SW_SHOW = 5;
     public const uint PM_REMOVE = 0x0001;
 
     public const int GWLP_USERDATA = -21;
+
+    public const uint DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
+    public const uint DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    public const uint DWMWA_BORDER_COLOR = 34;
+    public const uint DWMWA_CAPTION_COLOR = 35;
+    public const uint DWMWA_TEXT_COLOR = 36;
+    public const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
 
     public const uint WS_OVERLAPPED = 0x00000000;
     public const uint WS_CAPTION = 0x00C00000;
@@ -34,8 +61,10 @@ internal static class Win32Native
     public const uint WM_ACTIVATE = 0x0006;
     public const uint WM_SETFOCUS = 0x0007;
     public const uint WM_KILLFOCUS = 0x0008;
+    public const uint WM_GETMINMAXINFO = 0x0024;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_QUIT = 0x0012;
+    public const uint WM_SETICON = 0x0080;
     public const uint WM_SETCURSOR = 0x0020;
     public const uint WM_ERASEBKGND = 0x0014;
     public const uint WM_SYSCOMMAND = 0x0112;
@@ -67,6 +96,15 @@ internal static class Win32Native
     public const uint SC_KEYMENU = 0xF100;
 
     public const int IDC_ARROW = 32512;
+    public const int IMAGE_ICON = 1;
+    public const uint LR_LOADFROMFILE = 0x0010;
+    public const uint LR_DEFAULTSIZE = 0x0040;
+    public const int SM_CXICON = 11;
+    public const int SM_CYICON = 12;
+    public const int SM_CXSMICON = 49;
+    public const int SM_CYSMICON = 50;
+    public static readonly nuint ICON_SMALL = 0;
+    public static readonly nuint ICON_BIG = 1;
 
     public const int VK_TAB = 0x09;
     public const int VK_LEFT = 0x25;
@@ -205,6 +243,25 @@ internal static class Win32Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct MINMAXINFO
+    {
+        public POINT ptReserved;
+        public POINT ptMaxSize;
+        public POINT ptMaxPosition;
+        public POINT ptMinTrackSize;
+        public POINT ptMaxTrackSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct MONITORINFO
+    {
+        public uint cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct PAINTSTRUCT
     {
         public nint hdc;
@@ -257,6 +314,16 @@ internal static class Win32Native
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetForegroundWindow(nint hWnd);
+
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    internal static extern int DwmSetWindowAttribute(nint hwnd, uint dwAttribute, ref int pvAttribute, uint cbAttribute);
+
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    internal static extern int DwmSetWindowAttribute(nint hwnd, uint dwAttribute, ref uint pvAttribute, uint cbAttribute);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool UpdateWindow(nint hWnd);
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -296,10 +363,27 @@ internal static class Win32Native
     internal static extern bool GetClientRect(nint hWnd, out RECT lpRect);
 
     [DllImport("user32.dll", SetLastError = true)]
+    internal static extern nint MonitorFromWindow(nint hWnd, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO lpmi);
+
+    [DllImport("user32.dll", SetLastError = true)]
     internal static extern short GetKeyState(int nVirtKey);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint LoadCursor(nint hInstance, nint lpCursorName);
+
+    [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint LoadImage(nint hInst, string name, uint type, int cx, int cy, uint fuLoad);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern int GetSystemMetrics(int nIndex);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DestroyIcon(nint hIcon);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
@@ -311,12 +395,66 @@ internal static class Win32Native
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool PostMessage(nint hWnd, uint msg, nuint wParam, nint lParam);
 
+    [DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint SendMessage(nint hWnd, uint msg, nuint wParam, nint lParam);
+
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint SetCapture(nint hWnd);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool ReleaseCapture();
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern nint CreateSolidBrush(uint color);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DeleteObject(nint hObject);
+
+    internal static void ReleaseDarkBackgroundBrush()
+    {
+        lock (DarkBackgroundBrushSync)
+        {
+            if (_darkBackgroundBrush == 0)
+            {
+                return;
+            }
+
+            DeleteObject(_darkBackgroundBrush);
+            _darkBackgroundBrush = 0;
+        }
+    }
+
+    internal static void ApplyDarkWindowTheme(nint hwnd)
+    {
+        if (hwnd == 0)
+        {
+            return;
+        }
+
+        var enabled = 1;
+        var intSize = (uint)Marshal.SizeOf<int>();
+        var result = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, intSize);
+        if (result != 0)
+        {
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref enabled, intSize);
+        }
+
+        var captionColor = ToColorRef(43, 46, 49);
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref captionColor, (uint)Marshal.SizeOf<uint>());
+
+        var textColor = ToColorRef(239, 242, 234);
+        DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, ref textColor, (uint)Marshal.SizeOf<uint>());
+
+        var borderColor = ToColorRef(87, 99, 70);
+        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref borderColor, (uint)Marshal.SizeOf<uint>());
+    }
+
+    private static uint ToColorRef(byte red, byte green, byte blue)
+    {
+        return (uint)(red | (green << 8) | (blue << 16));
+    }
 
     public static int GetXFromLParam(nint lParam) => (short)((long)lParam & 0xFFFF);
 

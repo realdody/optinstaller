@@ -21,4 +21,10 @@ public partial class GameInstance : ObservableObject
 
     [ObservableProperty]
     private string _currentVersion = "Not Installed";
+
+    [ObservableProperty]
+    private string _fsrVersion = string.Empty;
+
+    [ObservableProperty]
+    private bool _isOptiPatcherInstalled;
 }

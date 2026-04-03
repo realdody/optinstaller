@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -15,6 +17,11 @@ namespace Optinstaller.ViewModels;
 
 public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChangedMessage>
 {
+    private static readonly string[] GenericGameDirectoryNames =
+    {
+        "Binaries", "Binary", "Bin", "Win64", "Win32", "x64", "x86", "Release", "Debug"
+    };
+
     private readonly OptiScalerService _optiScalerService;
     private readonly VersionService _versionService;
     private readonly ConfigurationService _configService;
@@ -117,21 +124,40 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         }
     }
 
-    public async Task<bool> AddGameFromPath(string rawPath)
+    public async Task<GameInstance?> AddGameFromExecutable(string rawExecutablePath)
     {
-        if (string.IsNullOrWhiteSpace(rawPath) || !Directory.Exists(rawPath))
+        if (string.IsNullOrWhiteSpace(rawExecutablePath))
         {
-            return false;
+            return null;
         }
 
-        var normalizedPath = NormalizeGamePath(rawPath);
+        var selectedPath = Path.GetFullPath(rawExecutablePath);
+        if (!File.Exists(selectedPath) ||
+            !string.Equals(Path.GetExtension(selectedPath), ".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Select a valid .exe file.");
+        }
+
+        var executablePath = ResolveSelectedExecutablePath(selectedPath);
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            throw new InvalidOperationException("Could not determine a usable game executable from the selected file.");
+        }
+
+        var gamePath = Path.GetDirectoryName(executablePath);
+        if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
+        {
+            throw new InvalidOperationException("Could not determine the game folder from the selected executable.");
+        }
+
+        var normalizedPath = NormalizeGamePath(gamePath);
 
         if (Games.Any(g => g.GamePath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
         {
-            return false;
+            return null;
         }
 
-        AddGameInternal(normalizedPath);
+        var game = AddGameInternal(normalizedPath, executablePath);
 
         if (!_configService.CurrentConfig.SavedGamePaths.Any(path =>
                 NormalizeGamePath(path).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
@@ -140,30 +166,313 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             await _configService.SaveAsync();
         }
 
-        return true;
+        return game;
     }
 
-    private void AddGameInternal(string path)
+    private GameInstance AddGameInternal(string path, string? executablePath = null)
     {
         var normalizedPath = NormalizeGamePath(path);
-        var dirName = Path.GetFileName(normalizedPath);
-        if (string.IsNullOrEmpty(dirName))
-        {
-            dirName = normalizedPath;
-        }
+        var resolvedExecutablePath = ResolveExecutablePath(normalizedPath, executablePath);
+        var displayName = ResolveGameDisplayName(normalizedPath, resolvedExecutablePath);
 
-        var isInstalled = _optiScalerService.IsInstalled(normalizedPath, out var installedFilename, out var detectedVersion);
+        var isInstalled = _optiScalerService.IsInstalled(normalizedPath, out var installedFilename, out var detectedVersion, out var fsrVersion, out var isOptiPatcherInstalled);
 
         var game = new GameInstance
         {
-            Name = dirName,
+            Name = displayName,
             GamePath = normalizedPath,
-            IsInstalled = isInstalled,
-            InstalledFilename = installedFilename,
-            CurrentVersion = isInstalled ? detectedVersion : "Not Installed"
+            ExecutableName = resolvedExecutablePath == null ? string.Empty : Path.GetFileName(resolvedExecutablePath),
         };
 
+        ApplyInstallationState(game, isInstalled, installedFilename, detectedVersion, fsrVersion, isOptiPatcherInstalled);
+
         Games.Add(game);
+        return game;
+    }
+
+    private static string ResolveGameDisplayName(string gamePath, string? executablePath)
+    {
+        var metadataName = TryGetExecutableMetadataName(executablePath);
+        if (!string.IsNullOrWhiteSpace(metadataName))
+        {
+            return metadataName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(executablePath))
+        {
+            var cleanedExecutableName = CleanGameName(Path.GetFileNameWithoutExtension(executablePath));
+            if (!string.IsNullOrWhiteSpace(cleanedExecutableName))
+            {
+                return cleanedExecutableName;
+            }
+        }
+
+        var directoryName = CleanGameName(GetPreferredGameDirectoryName(gamePath));
+        return string.IsNullOrWhiteSpace(directoryName) ? gamePath : directoryName;
+    }
+
+    private static string? ResolveExecutablePath(string gamePath, string? explicitExecutablePath)
+    {
+        if (!string.IsNullOrWhiteSpace(explicitExecutablePath) && File.Exists(explicitExecutablePath))
+        {
+            return Path.GetFullPath(explicitExecutablePath);
+        }
+
+        if (!Directory.Exists(gamePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var executablePaths = Directory.EnumerateFiles(gamePath, "*.exe", SearchOption.TopDirectoryOnly).ToList();
+            if (executablePaths.Count == 0)
+            {
+                return null;
+            }
+
+            var preferredDirectoryName = CleanGameName(GetPreferredGameDirectoryName(gamePath));
+            if (!string.IsNullOrWhiteSpace(preferredDirectoryName))
+            {
+                var exactMatch = executablePaths
+                    .Where(path => CleanGameName(Path.GetFileNameWithoutExtension(path)).Equals(preferredDirectoryName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(GetExecutablePreference)
+                    .ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault();
+                if (exactMatch != null)
+                {
+                    return exactMatch;
+                }
+
+                var prefixMatch = executablePaths
+                    .Where(path => CleanGameName(Path.GetFileNameWithoutExtension(path)).StartsWith(preferredDirectoryName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(GetExecutablePreference)
+                    .ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault();
+                if (prefixMatch != null)
+                {
+                    return prefixMatch;
+                }
+            }
+
+            return executablePaths
+                .OrderBy(GetExecutablePreference)
+                .ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ResolveSelectedExecutablePath(string executablePath)
+    {
+        if (!File.Exists(executablePath) ||
+            !string.Equals(Path.GetExtension(executablePath), ".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var executableDirectory = Path.GetDirectoryName(executablePath);
+        if (string.IsNullOrWhiteSpace(executableDirectory) || !Directory.Exists(executableDirectory))
+        {
+            return null;
+        }
+
+        if (!Directory.Exists(Path.Combine(executableDirectory, "Engine")))
+        {
+            return executablePath;
+        }
+
+        return TryResolveUnrealExecutableFromRoot(executableDirectory) ?? executablePath;
+    }
+
+    private static string? TryResolveUnrealExecutableFromRoot(string gameRootPath)
+    {
+        try
+        {
+            string? bestCandidate = null;
+            var bestPreference = int.MaxValue;
+
+            foreach (var codeNameDirectory in Directory.EnumerateDirectories(gameRootPath))
+            {
+                var codeName = Path.GetFileName(codeNameDirectory);
+                if (string.Equals(codeName, "Engine", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var binariesDirectory = Path.Combine(codeNameDirectory, "Binaries", "Win64");
+                if (!Directory.Exists(binariesDirectory))
+                {
+                    continue;
+                }
+
+                foreach (var candidate in Directory.EnumerateFiles(binariesDirectory, "*.exe", SearchOption.TopDirectoryOnly))
+                {
+                    var preference = GetUnrealRootExecutablePreference(candidate, codeName);
+                    if (preference > bestPreference)
+                    {
+                        continue;
+                    }
+
+                    if (preference == bestPreference && bestCandidate != null &&
+                        string.Compare(Path.GetFileName(candidate), Path.GetFileName(bestCandidate), StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        continue;
+                    }
+
+                    bestCandidate = candidate;
+                    bestPreference = preference;
+                }
+            }
+
+            return bestCandidate;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int GetExecutablePreference(string executablePath)
+    {
+        var executableName = Path.GetFileNameWithoutExtension(executablePath);
+        if (Regex.IsMatch(executableName, @"(?i)(?:-|_)(win64|wingdk)(?:-|_)shipping$"))
+        {
+            return 0;
+        }
+
+        if (Regex.IsMatch(executableName, @"(?i)(?:-|_)(win64|wingdk)$"))
+        {
+            return 1;
+        }
+
+        if (Regex.IsMatch(executableName, @"(?i)(?:-|_)(win64|wingdk)(?:-|_)"))
+        {
+            return 2;
+        }
+
+        if (executableName.Contains("shipping", StringComparison.OrdinalIgnoreCase))
+        {
+            return 3;
+        }
+
+        if (executableName.Contains("launcher", StringComparison.OrdinalIgnoreCase) ||
+            executableName.Contains("crashreport", StringComparison.OrdinalIgnoreCase) ||
+            executableName.Contains("bootstrap", StringComparison.OrdinalIgnoreCase) ||
+            executableName.Contains("setup", StringComparison.OrdinalIgnoreCase) ||
+            executableName.Contains("uninstall", StringComparison.OrdinalIgnoreCase))
+        {
+            return 5;
+        }
+
+        return 4;
+    }
+
+    private static int GetUnrealRootExecutablePreference(string executablePath, string codeName)
+    {
+        var executableName = Path.GetFileNameWithoutExtension(executablePath);
+        var cleanedCodeName = CleanGameName(codeName);
+        var cleanedExecutableName = CleanGameName(executableName);
+        var startsWithCodeName = !string.IsNullOrWhiteSpace(cleanedCodeName) &&
+            cleanedExecutableName.StartsWith(cleanedCodeName, StringComparison.OrdinalIgnoreCase);
+
+        if (startsWithCodeName && Regex.IsMatch(executableName, @"(?i)(?:-|_)(win64|wingdk)(?:-|_)shipping$"))
+        {
+            return 0;
+        }
+
+        if (startsWithCodeName && Regex.IsMatch(executableName, @"(?i)(?:-|_)(win64|wingdk)(?:-|_|$)"))
+        {
+            return 1;
+        }
+
+        if (Regex.IsMatch(executableName, @"(?i)(?:-|_)(win64|wingdk)(?:-|_)shipping$"))
+        {
+            return 2;
+        }
+
+        if (Regex.IsMatch(executableName, @"(?i)(?:-|_)(win64|wingdk)(?:-|_|$)"))
+        {
+            return 3;
+        }
+
+        if (startsWithCodeName)
+        {
+            return 4;
+        }
+
+        return 5;
+    }
+
+    private static string GetPreferredGameDirectoryName(string gamePath)
+    {
+        var currentDirectory = new DirectoryInfo(gamePath);
+        while (currentDirectory != null &&
+               GenericGameDirectoryNames.Any(name => name.Equals(currentDirectory.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            currentDirectory = currentDirectory.Parent;
+        }
+
+        return currentDirectory?.Name ?? Path.GetFileName(gamePath);
+    }
+
+    private static string? TryGetExecutableMetadataName(string? executablePath)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var info = FileVersionInfo.GetVersionInfo(executablePath);
+            foreach (var candidate in new[] { info.ProductName, info.FileDescription })
+            {
+                var cleanedCandidate = CleanGameName(candidate ?? string.Empty);
+                if (string.IsNullOrWhiteSpace(cleanedCandidate) || IsGenericExecutableMetadata(cleanedCandidate))
+                {
+                    continue;
+                }
+
+                return cleanedCandidate;
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static bool IsGenericExecutableMetadata(string value)
+    {
+        return value.Equals("Bootstrap Packaged Game", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("UE4 Game", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("UE5 Game", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("Unreal Engine", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string CleanGameName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var cleaned = value.Trim();
+        cleaned = Regex.Replace(cleaned, @"(?i)(?:[-_ ](?:win64|wingdk))?[-_ ]shipping$", string.Empty);
+        cleaned = Regex.Replace(cleaned, @"(?i)[-_ ](?:win64|wingdk)$", string.Empty);
+        cleaned = cleaned.Replace('_', ' ').Replace('-', ' ');
+        cleaned = Regex.Replace(cleaned, @"(?<=[A-Z])(?=[A-Z][a-z])", " ");
+        cleaned = Regex.Replace(cleaned, @"(?<=[a-z0-9])(?=[A-Z])", " ");
+        cleaned = Regex.Replace(cleaned, @"(?<=[A-Za-z])(?=[0-9])", " ");
+        cleaned = Regex.Replace(cleaned, @"(?<=[0-9])(?=[A-Za-z])", " ");
+        cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim();
+
+        return cleaned;
     }
 
     public InstallationWizardViewModel CreateInstallationWizard(GameInstance game)
@@ -179,14 +488,8 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     public void RefreshGameInstallation(GameInstance game)
     {
-        game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename, out var detectedVersion);
-        game.InstalledFilename = filename;
-        game.CurrentVersion = game.IsInstalled ? detectedVersion : "Not Installed";
-
-        if (!game.IsInstalled)
-        {
-            game.InstalledFilename = string.Empty;
-        }
+        var isInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename, out var detectedVersion, out var fsrVersion, out var isOptiPatcherInstalled);
+        ApplyInstallationState(game, isInstalled, filename, detectedVersion, fsrVersion, isOptiPatcherInstalled);
     }
 
     public async Task UpdateOptiScaler(GameInstance game, OptiScalerVersion selectedVersion)
@@ -201,18 +504,25 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             _optiScalerService.UpdateDll(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
         });
 
-        if (_optiScalerService.IsInstalled(game.GamePath, out var installedFilename, out var newVersion))
+        var previousIsInstalled = game.IsInstalled;
+        var previousInstalledFilename = game.InstalledFilename;
+        var previousVersion = game.CurrentVersion;
+        var fallbackVersion = string.IsNullOrWhiteSpace(selectedVersion.TagName)
+            ? previousVersion
+            : selectedVersion.TagName;
+
+        var isInstalled = _optiScalerService.IsInstalled(game.GamePath, out var installedFilename, out var newVersion, out var fsrVersion, out var isOptiPatcherInstalled);
+        var redetectFailed = (!isInstalled && previousIsInstalled) ||
+            string.IsNullOrWhiteSpace(installedFilename) ||
+            string.IsNullOrWhiteSpace(newVersion);
+
+        if (redetectFailed)
         {
-            game.IsInstalled = true;
-            game.InstalledFilename = installedFilename;
-            game.CurrentVersion = newVersion;
+            ApplyInstallationState(game, previousIsInstalled, previousInstalledFilename, fallbackVersion, string.Empty, false);
+            return;
         }
-        else
-        {
-            game.IsInstalled = false;
-            game.InstalledFilename = string.Empty;
-            game.CurrentVersion = selectedVersion.TagName;
-        }
+
+        ApplyInstallationState(game, isInstalled, installedFilename, newVersion, fsrVersion, isOptiPatcherInstalled);
     }
 
     public async Task UninstallOptiScaler(GameInstance game)
@@ -223,10 +533,22 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         }
 
         await _optiScalerService.UninstallAsync(game.GamePath, game.InstalledFilename);
+        ApplyInstallationState(game, false, string.Empty, string.Empty, string.Empty, false);
+    }
 
-        game.IsInstalled = false;
-        game.InstalledFilename = string.Empty;
-        game.CurrentVersion = "Not Installed";
+    private static void ApplyInstallationState(
+        GameInstance game,
+        bool isInstalled,
+        string installedFilename,
+        string detectedVersion,
+        string fsrVersion,
+        bool isOptiPatcherInstalled)
+    {
+        game.IsInstalled = isInstalled;
+        game.InstalledFilename = isInstalled ? installedFilename : string.Empty;
+        game.CurrentVersion = isInstalled ? detectedVersion : "Not Installed";
+        game.FsrVersion = isInstalled ? fsrVersion : string.Empty;
+        game.IsOptiPatcherInstalled = isInstalled && isOptiPatcherInstalled;
     }
 
     public GameConfigViewModel CreateGameConfig(GameInstance game)

@@ -64,6 +64,7 @@ float4 main(PS_INPUT input) : SV_Target
 }";
 
     private readonly nint _hwnd;
+    private nint _context;
     private readonly Dictionary<nint, ID3D11ShaderResourceView> _textures = new();
 
     private ID3D11Device? _device;
@@ -97,18 +98,27 @@ float4 main(PS_INPUT input) : SV_Target
         _width = Math.Max(1, width);
         _height = Math.Max(1, height);
 
-        CreateDeviceResources();
+        try
+        {
+            CreateDeviceResources();
 
-        ImGui.CreateContext();
+            _context = ImGui.CreateContext();
+            SetCurrentContext();
 
-        var io = ImGui.GetIO();
-        io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
+            var io = ImGui.GetIO();
+            io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
 
-        configureIo(io);
-        loadFonts(io);
-        applyTheme();
+            configureIo(io);
+            loadFonts(io);
+            applyTheme();
 
-        CreateDeviceObjects();
+            CreateDeviceObjects();
+        }
+        catch
+        {
+            CleanupFailedInitialization();
+            throw;
+        }
     }
 
     public void Dispose()
@@ -118,59 +128,40 @@ float4 main(PS_INPUT input) : SV_Target
             return;
         }
 
+        if (_context != 0)
+        {
+            SetCurrentContext();
+            ImGui.DestroyContext(_context);
+            _context = 0;
+        }
+
         _disposed = true;
-
-        ImGui.DestroyContext();
-
-        var disposedTextures = new HashSet<ID3D11ShaderResourceView>();
-        foreach (var texture in _textures.Values)
-        {
-            if (disposedTextures.Add(texture))
-            {
-                texture.Dispose();
-            }
-        }
-
-        if (_fontShaderResourceView != null && disposedTextures.Add(_fontShaderResourceView))
-        {
-            _fontShaderResourceView.Dispose();
-        }
-
-        _textures.Clear();
-        _fontShaderResourceView = null;
-        _fontTextureId = 0;
-        _nextTextureId = 1;
-
-        _vertexBuffer?.Dispose();
-        _indexBuffer?.Dispose();
-        _vertexConstantBuffer?.Dispose();
-        _inputLayout?.Dispose();
-        _vertexShader?.Dispose();
-        _pixelShader?.Dispose();
-        _fontSampler?.Dispose();
-        _blendState?.Dispose();
-        _rasterizerState?.Dispose();
-        _depthStencilState?.Dispose();
-        _renderTargetView?.Dispose();
-        _swapChain?.Dispose();
-
-        _deviceContext?.ClearState();
-        _deviceContext?.Dispose();
-        _device?.Dispose();
+        DisposeGraphicsResources();
     }
 
-    public void BeginFrame(float deltaTime, int width, int height)
+    public bool BeginFrame(float deltaTime, int width, int height)
     {
+        if (!SetCurrentContext())
+        {
+            return false;
+        }
+
         var io = ImGui.GetIO();
         io.DisplaySize = new Vector2(Math.Max(1, width), Math.Max(1, height));
         io.DisplayFramebufferScale = Vector2.One;
         io.DeltaTime = deltaTime > 0f ? deltaTime : 1f / 60f;
 
         ImGui.NewFrame();
+        return true;
     }
 
-    public void Render(Vector4 clearColor)
+    public void Render(Vector4 clearColor, bool enableVsync = true)
     {
+        if (!SetCurrentContext())
+        {
+            return;
+        }
+
         if (_deviceContext == null || _renderTargetView == null || _swapChain == null)
         {
             return;
@@ -182,12 +173,12 @@ float4 main(PS_INPUT input) : SV_Target
         _deviceContext.ClearRenderTargetView(_renderTargetView, new Color4(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W));
 
         RenderDrawData(ImGui.GetDrawData());
-        _swapChain.Present(1, PresentFlags.None);
+        _swapChain.Present(enableVsync ? 1u : 0u, PresentFlags.None);
     }
 
     public void Resize(int width, int height)
     {
-        if (_swapChain == null || _deviceContext == null || width <= 0 || height <= 0)
+        if (_disposed || _context == 0 || _swapChain == null || _deviceContext == null || width <= 0 || height <= 0)
         {
             return;
         }
@@ -205,6 +196,11 @@ float4 main(PS_INPUT input) : SV_Target
 
     public bool HandleMessage(uint msg, nuint wParam, nint lParam)
     {
+        if (!SetCurrentContext())
+        {
+            return false;
+        }
+
         var io = ImGui.GetIO();
 
         switch (msg)
@@ -282,6 +278,83 @@ float4 main(PS_INPUT input) : SV_Target
         return false;
     }
 
+    private void CleanupFailedInitialization()
+    {
+        if (_context != 0)
+        {
+            ImGui.SetCurrentContext(_context);
+            ImGui.DestroyContext(_context);
+            _context = 0;
+        }
+
+        DisposeGraphicsResources();
+    }
+
+    private void DisposeGraphicsResources()
+    {
+        var disposedTextures = new HashSet<ID3D11ShaderResourceView>();
+        foreach (var texture in _textures.Values)
+        {
+            if (disposedTextures.Add(texture))
+            {
+                texture.Dispose();
+            }
+        }
+
+        if (_fontShaderResourceView != null && disposedTextures.Add(_fontShaderResourceView))
+        {
+            _fontShaderResourceView.Dispose();
+        }
+
+        _textures.Clear();
+        _fontShaderResourceView = null;
+        _fontTextureId = 0;
+        _nextTextureId = 1;
+
+        _deviceContext?.ClearState();
+
+        _vertexBuffer?.Dispose();
+        _vertexBuffer = null;
+        _indexBuffer?.Dispose();
+        _indexBuffer = null;
+        _vertexConstantBuffer?.Dispose();
+        _vertexConstantBuffer = null;
+        _inputLayout?.Dispose();
+        _inputLayout = null;
+        _vertexShader?.Dispose();
+        _vertexShader = null;
+        _pixelShader?.Dispose();
+        _pixelShader = null;
+        _fontSampler?.Dispose();
+        _fontSampler = null;
+        _blendState?.Dispose();
+        _blendState = null;
+        _rasterizerState?.Dispose();
+        _rasterizerState = null;
+        _depthStencilState?.Dispose();
+        _depthStencilState = null;
+        _renderTargetView?.Dispose();
+        _renderTargetView = null;
+        _swapChain?.Dispose();
+        _swapChain = null;
+
+        _deviceContext?.Dispose();
+        _deviceContext = null;
+        _device?.Dispose();
+        _device = null;
+    }
+
+    private bool SetCurrentContext()
+    {
+        if (_disposed || _context == 0)
+        {
+            return false;
+        }
+
+        ImGui.SetCurrentContext(_context);
+        return true;
+    }
+
     private void CreateDeviceResources()
     {
         var creationFlags = DeviceCreationFlags.BgraSupport;
@@ -318,7 +391,7 @@ float4 main(PS_INPUT input) : SV_Target
             false,
             Usage.RenderTargetOutput,
             2,
-            Scaling.Stretch,
+            Scaling.None,
             SwapEffect.FlipDiscard,
             AlphaMode.Ignore,
             SwapChainFlags.None);

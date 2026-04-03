@@ -9,6 +9,7 @@
     <Product>OptiManager</Product>
     <Title>OptiManager</Title>
     <RootNamespace>Optinstaller</RootNamespace>
+    <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
