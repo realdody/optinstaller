@@ -139,11 +139,11 @@ float4 main(PS_INPUT input) : SV_Target
         DisposeGraphicsResources();
     }
 
-    public void BeginFrame(float deltaTime, int width, int height)
+    public bool BeginFrame(float deltaTime, int width, int height)
     {
         if (!SetCurrentContext())
         {
-            return;
+            return false;
         }
 
         var io = ImGui.GetIO();
@@ -152,6 +152,7 @@ float4 main(PS_INPUT input) : SV_Target
         io.DeltaTime = deltaTime > 0f ? deltaTime : 1f / 60f;
 
         ImGui.NewFrame();
+        return true;
     }
 
     public void Render(Vector4 clearColor, bool enableVsync = true)

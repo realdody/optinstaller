@@ -164,7 +164,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
         try
         {
             _uiTime += delta;
-            _renderer.BeginFrame(delta, _windowWidth, _windowHeight);
+            if (!_renderer.BeginFrame(delta, _windowWidth, _windowHeight))
+            {
+                return false;
+            }
+
             RenderUi();
             _renderer.Render(WindowBackgroundColor, enableVsync);
             return true;
@@ -3255,7 +3259,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
             _isRenderingFrame = true;
             try
             {
-                _renderer.BeginFrame(delta, _windowWidth, _windowHeight);
+                if (!_renderer.BeginFrame(delta, _windowWidth, _windowHeight))
+                {
+                    return false;
+                }
+
                 _renderContent();
                 _renderer.Render(WindowBackgroundColor, enableVsync);
                 return true;
