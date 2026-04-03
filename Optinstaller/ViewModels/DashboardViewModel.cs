@@ -532,12 +532,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         }
 
         await _optiScalerService.UninstallAsync(game.GamePath, game.InstalledFilename);
-
-        game.IsInstalled = false;
-        game.InstalledFilename = string.Empty;
-        game.CurrentVersion = "Not Installed";
-        game.FsrVersion = string.Empty;
-        game.IsOptiPatcherInstalled = false;
+        ApplyInstallationState(game, false, string.Empty, string.Empty, string.Empty, false);
     }
 
     private static void ApplyInstallationState(

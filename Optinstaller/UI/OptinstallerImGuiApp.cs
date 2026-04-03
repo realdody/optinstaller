@@ -2234,6 +2234,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             return;
         }
+
+        RenderNotification();
+
         var wizard = _installationDialog.ViewModel;
 
         ImGui.BeginChild("WizardSteps", new Vector2(220f, -54f), ImGuiChildFlags.Borders);
@@ -3426,7 +3429,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 0,
                 _windowClassName,
                 title,
-                Win32Native.WS_OVERLAPPEDWINDOW | Win32Native.WS_VISIBLE,
+                Win32Native.WS_OVERLAPPEDWINDOW,
                 Win32Native.CW_USEDEFAULT,
                 Win32Native.CW_USEDEFAULT,
                 windowRect.Right - windowRect.Left,
