@@ -309,7 +309,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         switch (msg)
         {
             case Win32Native.WM_ERASEBKGND:
-                return 1;
+                return _isInSizeMove ? Win32Native.DefWindowProc(hwnd, msg, wParam, lParam) : 1;
 
             case Win32Native.WM_SYSCOMMAND when ((uint)wParam & 0xFFF0) == Win32Native.SC_KEYMENU:
                 return 0;
@@ -336,6 +336,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
             case Win32Native.WM_SIZING:
                 Win32Native.InvalidateRect(hwnd, IntPtr.Zero, false);
+                if (!_isRenderingFrame)
+                {
+                    Win32Native.UpdateWindow(hwnd);
+                }
                 break;
 
             case Win32Native.WM_EXITSIZEMOVE:
@@ -2880,7 +2884,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             switch (msg)
             {
                 case Win32Native.WM_ERASEBKGND:
-                    return 1;
+                    return _isInSizeMove ? Win32Native.DefWindowProc(hwnd, msg, wParam, lParam) : 1;
 
                 case Win32Native.WM_SYSCOMMAND when ((uint)wParam & 0xFFF0) == Win32Native.SC_KEYMENU:
                     return 0;
@@ -2907,6 +2911,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
                 case Win32Native.WM_SIZING:
                     Win32Native.InvalidateRect(hwnd, IntPtr.Zero, false);
+                    if (!_isRenderingFrame)
+                    {
+                        Win32Native.UpdateWindow(hwnd);
+                    }
                     break;
 
                 case Win32Native.WM_EXITSIZEMOVE:
