@@ -168,17 +168,16 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         var resolvedExecutablePath = ResolveExecutablePath(normalizedPath, executablePath);
         var displayName = ResolveGameDisplayName(normalizedPath, resolvedExecutablePath);
 
-        var isInstalled = _optiScalerService.IsInstalled(normalizedPath, out var installedFilename, out var detectedVersion);
+        var isInstalled = _optiScalerService.IsInstalled(normalizedPath, out var installedFilename, out var detectedVersion, out var fsrVersion, out var isOptiPatcherInstalled);
 
         var game = new GameInstance
         {
             Name = displayName,
             GamePath = normalizedPath,
             ExecutableName = resolvedExecutablePath == null ? string.Empty : Path.GetFileName(resolvedExecutablePath),
-            IsInstalled = isInstalled,
-            InstalledFilename = installedFilename,
-            CurrentVersion = isInstalled ? detectedVersion : "Not Installed"
         };
+
+        ApplyInstallationState(game, isInstalled, installedFilename, detectedVersion, fsrVersion, isOptiPatcherInstalled);
 
         Games.Add(game);
         return game;
@@ -482,14 +481,8 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     public void RefreshGameInstallation(GameInstance game)
     {
-        game.IsInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename, out var detectedVersion);
-        game.InstalledFilename = filename;
-        game.CurrentVersion = game.IsInstalled ? detectedVersion : "Not Installed";
-
-        if (!game.IsInstalled)
-        {
-            game.InstalledFilename = string.Empty;
-        }
+        var isInstalled = _optiScalerService.IsInstalled(game.GamePath, out var filename, out var detectedVersion, out var fsrVersion, out var isOptiPatcherInstalled);
+        ApplyInstallationState(game, isInstalled, filename, detectedVersion, fsrVersion, isOptiPatcherInstalled);
     }
 
     public async Task UpdateOptiScaler(GameInstance game, OptiScalerVersion selectedVersion)
@@ -504,16 +497,11 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             _optiScalerService.UpdateDll(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
         });
 
-        if (_optiScalerService.IsInstalled(game.GamePath, out var installedFilename, out var newVersion))
+        var isInstalled = _optiScalerService.IsInstalled(game.GamePath, out var installedFilename, out var newVersion, out var fsrVersion, out var isOptiPatcherInstalled);
+        ApplyInstallationState(game, isInstalled, installedFilename, newVersion, fsrVersion, isOptiPatcherInstalled);
+
+        if (!game.IsInstalled)
         {
-            game.IsInstalled = true;
-            game.InstalledFilename = installedFilename;
-            game.CurrentVersion = newVersion;
-        }
-        else
-        {
-            game.IsInstalled = false;
-            game.InstalledFilename = string.Empty;
             game.CurrentVersion = selectedVersion.TagName;
         }
     }
@@ -530,6 +518,23 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         game.IsInstalled = false;
         game.InstalledFilename = string.Empty;
         game.CurrentVersion = "Not Installed";
+        game.FsrVersion = string.Empty;
+        game.IsOptiPatcherInstalled = false;
+    }
+
+    private static void ApplyInstallationState(
+        GameInstance game,
+        bool isInstalled,
+        string installedFilename,
+        string detectedVersion,
+        string fsrVersion,
+        bool isOptiPatcherInstalled)
+    {
+        game.IsInstalled = isInstalled;
+        game.InstalledFilename = isInstalled ? installedFilename : string.Empty;
+        game.CurrentVersion = isInstalled ? detectedVersion : "Not Installed";
+        game.FsrVersion = isInstalled ? fsrVersion : string.Empty;
+        game.IsOptiPatcherInstalled = isInstalled && isOptiPatcherInstalled;
     }
 
     public GameConfigViewModel CreateGameConfig(GameInstance game)

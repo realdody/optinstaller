@@ -17,6 +17,8 @@ public class OptiScalerService
     private const string OptiScalerIniName = "OptiScaler.ini";
     private const string OptiPatcherUrl = "https://raw.githubusercontent.com/optiscaler/OptiPatcher/main/OptiPatcher/dllmain.cpp";
     private const string OptiPatcherDownloadUrl = "https://github.com/optiscaler/OptiPatcher/releases/download/rolling/OptiPatcher.asi";
+    private const string OptiPatcherRelativePath = "plugins\\OptiPatcher.asi";
+    private const string FsrUpscalerDllName = "amd_fidelityfx_upscaler_dx12.dll";
 
     private static readonly string[] PossibleFilenames = 
     { 
@@ -24,13 +26,18 @@ public class OptiScalerService
         "d3d12.dll", "wininet.dll", "winhttp.dll", "OptiScaler.asi" 
     };
 
-    public bool IsInstalled(string gamePath, out string installedFilename, out string detectedVersion)
+    public bool IsInstalled(string gamePath, out string installedFilename, out string detectedVersion, out string fsrVersion, out bool isOptiPatcherInstalled)
     {
         installedFilename = string.Empty;
         detectedVersion = string.Empty;
+        fsrVersion = string.Empty;
+        isOptiPatcherInstalled = false;
         
         if (!File.Exists(Path.Combine(gamePath, OptiScalerIniName)))
             return false;
+
+        fsrVersion = DetectFsrVersion(gamePath);
+        isOptiPatcherInstalled = File.Exists(Path.Combine(gamePath, OptiPatcherRelativePath));
 
         foreach (var file in PossibleFilenames)
         {
@@ -59,6 +66,11 @@ public class OptiScalerService
     }
 
     // Overload for backward compatibility
+    public bool IsInstalled(string gamePath, out string installedFilename, out string detectedVersion)
+    {
+        return IsInstalled(gamePath, out installedFilename, out detectedVersion, out _, out _);
+    }
+
     public bool IsInstalled(string gamePath, out string installedFilename)
     {
         return IsInstalled(gamePath, out installedFilename, out _);
@@ -66,25 +78,74 @@ public class OptiScalerService
 
     private static string GetVersionFromFileInfo(FileVersionInfo info)
     {
-        // Try FileVersion first (e.g., "0.7.9.0")
-        if (!string.IsNullOrEmpty(info.FileVersion))
+        var productVersion = NormalizeVersionString(info.ProductVersion, trimTrailingBuildSegment: false);
+        if (!string.IsNullOrWhiteSpace(productVersion))
         {
-            var version = info.FileVersion.Trim();
-            // Remove trailing ".0" if present (0.7.9.0 -> 0.7.9)
-            if (version.EndsWith(".0") && version.Count(c => c == '.') >= 3)
-            {
-                version = version[..^2];
-            }
-            return version;
+            return productVersion;
         }
-        
-        // Fallback to ProductVersion
-        if (!string.IsNullOrEmpty(info.ProductVersion))
+
+        var fileVersion = NormalizeVersionString(info.FileVersion, trimTrailingBuildSegment: true);
+        if (!string.IsNullOrWhiteSpace(fileVersion))
         {
-            return info.ProductVersion.Trim();
+            return fileVersion;
         }
-        
+
         return "Unknown";
+    }
+
+    private static string NormalizeVersionString(string? rawVersion, bool trimTrailingBuildSegment)
+    {
+        if (string.IsNullOrWhiteSpace(rawVersion))
+        {
+            return string.Empty;
+        }
+
+        var version = rawVersion.Trim();
+        version = Regex.Replace(version, @"\s+\(([0-9a-f]{7,40})\)$", string.Empty, RegexOptions.IgnoreCase);
+
+        if (trimTrailingBuildSegment && version.EndsWith(".0", StringComparison.Ordinal) && version.Count(c => c == '.') >= 3)
+        {
+            version = version[..^2];
+        }
+
+        return version.Trim();
+    }
+
+    private static string DetectFsrVersion(string gamePath)
+    {
+        var path = Path.Combine(gamePath, FsrUpscalerDllName);
+        if (!File.Exists(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            var versionInfo = FileVersionInfo.GetVersionInfo(path);
+            if (IsKnownFsr4Int8Binary(fileInfo.Length, versionInfo.FileVersion))
+            {
+                return "4 Int8";
+            }
+
+            var fileVersion = NormalizeVersionString(versionInfo.FileVersion, trimTrailingBuildSegment: true);
+            return string.IsNullOrWhiteSpace(fileVersion) ? "Unknown" : fileVersion;
+        }
+        catch
+        {
+            return "Unknown";
+        }
+    }
+
+    private static bool IsKnownFsr4Int8Binary(long fileLength, string? rawFileVersion)
+    {
+        if (fileLength < 30_000_000)
+        {
+            return false;
+        }
+
+        return string.Equals(rawFileVersion?.Trim(), "4.0.2.0", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(NormalizeVersionString(rawFileVersion, trimTrailingBuildSegment: true), "4.0.2", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task InstallAsync(InstallationOptions options)
@@ -265,7 +326,7 @@ public class OptiScalerService
                 if (File.Exists(path)) File.Delete(path);
             }
             
-            var patcher = Path.Combine(gamePath, "plugins", "OptiPatcher.asi");
+            var patcher = Path.Combine(gamePath, OptiPatcherRelativePath);
             if (File.Exists(patcher)) File.Delete(patcher);
             
             var pluginsDir = Path.Combine(gamePath, "plugins");

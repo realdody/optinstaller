@@ -637,7 +637,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private void DrawPageButton(AppPage page, string title, string subtitle)
     {
         var selected = _currentPage == page;
-        if (DrawSelectableRow($"Nav::{page}", title, subtitle, selected, InfoColor, string.Empty, centerText: false))
+        if (DrawSelectableRow($"Nav::{page}", title, subtitle, selected, InfoColor, string.Empty, centerText: false, persistentIndicator: true))
         {
             _currentPage = page;
         }
@@ -849,20 +849,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
         foreach (var game in filteredGames)
         {
             var isSelected = selectedGame != null && selectedGame.GamePath.Equals(game.GamePath, StringComparison.OrdinalIgnoreCase);
-            var detailText = game.IsInstalled
-                ? game.CurrentVersion
-                : "Not installed";
-            var accent = game.IsInstalled ? SuccessColor : InfoColor;
-            var badge = game.IsInstalled ? "Installed" : "Ready";
+            var clicked = game.IsInstalled
+                ? DrawInstalledGameRow(game, isSelected)
+                : DrawSelectableRow(
+                    $"Game::{game.GamePath}",
+                    game.Name,
+                    "Not installed",
+                    isSelected,
+                    InfoColor,
+                    "Ready",
+                    centerText: false);
 
-            if (DrawSelectableRow(
-                $"Game::{game.GamePath}",
-                game.Name,
-                detailText,
-                isSelected,
-                accent,
-                badge,
-                centerText: false))
+            if (clicked)
             {
                 _selectedGamePath = game.GamePath;
                 dashboard.SelectedGame = game;
@@ -1812,20 +1810,32 @@ public sealed class OptinstallerImGuiApp : IDisposable
         return current;
     }
 
-    private static void RenderInlinePill(string text, Vector4 accent)
+    private static Vector2 GetInlinePillSize(string text)
     {
         var textSize = ImGui.CalcTextSize(text);
         var padding = new Vector2(10f, 6f);
-        var min = ImGui.GetCursorScreenPos();
-        var size = textSize + (padding * 2f);
-        var max = min + size;
-        var drawList = ImGui.GetWindowDrawList();
+        return textSize + (padding * 2f);
+    }
 
-        ImGui.Dummy(size);
+    private static void DrawInlinePill(ImDrawListPtr drawList, Vector2 min, string text, Vector4 accent)
+    {
+        var padding = new Vector2(10f, 6f);
+        var size = GetInlinePillSize(text);
+        var max = min + size;
 
         drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.15f)), 2f);
         drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.45f)), 2f);
         drawList.AddText(min + padding, ImGui.ColorConvertFloat4ToU32(accent), text);
+    }
+
+    private static void RenderInlinePill(string text, Vector4 accent)
+    {
+        var min = ImGui.GetCursorScreenPos();
+        var size = GetInlinePillSize(text);
+        var drawList = ImGui.GetWindowDrawList();
+
+        ImGui.Dummy(size);
+        DrawInlinePill(drawList, min, text, accent);
     }
 
     private static void RenderHeroSignal(string label, string value, Vector4 accent)
@@ -2616,6 +2626,152 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.PopStyleColor(2);
     }
 
+    private bool DrawInstalledGameRow(GameInstance game, bool selected)
+    {
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
+        var min = ImGui.GetCursorScreenPos();
+        var lineHeight = ImGui.GetTextLineHeight();
+        var badge = "Installed";
+        var detail = string.IsNullOrWhiteSpace(game.InstalledFilename)
+            ? "Installed"
+            : $"Target DLL: {game.InstalledFilename}";
+        var badgeSize = ImGui.CalcTextSize(badge);
+        var availableWidth = Math.Max(0f, ImGui.GetContentRegionAvail().X - 6f);
+        var pillsWidth = Math.Max(1f, availableWidth - badgeSize.X - 40f);
+        var pillsHeight = MeasureInstalledGamePillsHeight(game, pillsWidth);
+        var contentHeight = (lineHeight * 2f) + 11f + pillsHeight;
+        var rowHeight = MathF.Max(88f, contentHeight + 16f);
+        var size = new Vector2(availableWidth, rowHeight);
+
+        if (size.X < 1f || size.Y < 1f)
+        {
+            ImGui.Dummy(new Vector2(1f, MathF.Max(1f, rowHeight)));
+            return false;
+        }
+
+        ImGui.InvisibleButton($"Game::{game.GamePath}", size);
+        var hovered = ImGui.IsItemHovered();
+        var clicked = ImGui.IsItemClicked();
+
+        var emphasis = AnimateValue($"Row::Game::{game.GamePath}", selected ? 1f : hovered ? 0.5f : 0f);
+        var max = min + size;
+        var drawList = ImGui.GetWindowDrawList();
+        var accent = SuccessColor;
+        var background = Vector4.Lerp(new Vector4(0.22f, 0.23f, 0.22f, 0.55f), new Vector4(0.29f, 0.35f, 0.22f, 0.97f), emphasis);
+        var border = Vector4.Lerp(new Vector4(PanelBorderColor.X, PanelBorderColor.Y, PanelBorderColor.Z, 0.50f), new Vector4(accent.X, accent.Y, accent.Z, 0.82f), emphasis);
+        var textColor = ImGui.ColorConvertFloat4ToU32(PrimaryTextColor);
+        var detailColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(MutedTextColor, accent, 0.35f));
+        var badgeColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(new Vector4(accent.X, accent.Y, accent.Z, 0.75f), accent, emphasis));
+        var titleSize = ImGui.CalcTextSize(game.Name);
+
+        drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 2f);
+        drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 2f, ImDrawFlags.None, 1f);
+
+        if (emphasis > 0.02f)
+        {
+            drawList.AddLine(
+                new Vector2(min.X + 8f, min.Y + 8f),
+                new Vector2(min.X + 8f, max.Y - 8f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.85f * emphasis)),
+                2f);
+        }
+
+        var contentLeft = min.X + 16f;
+        var contentRight = max.X - badgeSize.X - 24f;
+        var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
+        var detailY = textStartY + lineHeight + 3f;
+        var pillsOrigin = new Vector2(contentLeft, detailY + lineHeight + 8f);
+
+        drawList.AddText(new Vector2(contentLeft, textStartY), textColor, game.Name);
+        drawList.AddText(new Vector2(contentLeft, detailY), detailColor, detail);
+        DrawInstalledGamePills(drawList, pillsOrigin, Math.Max(1f, contentRight - contentLeft), game);
+
+        var badgeX = max.X - badgeSize.X - 14f;
+        var badgeY = min.Y + MathF.Max(8f, (rowHeight - badgeSize.Y) * 0.5f);
+        drawList.AddText(new Vector2(badgeX, badgeY), badgeColor, badge);
+
+        return clicked;
+    }
+
+    private static float MeasureInstalledGamePillsHeight(GameInstance game, float maxWidth)
+    {
+        var cursorX = 0f;
+        var cursorY = 0f;
+        var lineHeight = 0f;
+
+        MeasureInlinePillLayout($"OptiScaler {game.CurrentVersion}", maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        MeasureInlinePillLayout(GetFsrQuickPillText(game), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        MeasureInlinePillLayout(GetOptiPatcherQuickPillText(game), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+
+        return lineHeight <= 0f ? 0f : cursorY + lineHeight;
+    }
+
+    private static void DrawInstalledGamePills(ImDrawListPtr drawList, Vector2 origin, float maxWidth, GameInstance game)
+    {
+        var cursorX = 0f;
+        var cursorY = 0f;
+        var lineHeight = 0f;
+
+        DrawInlinePillLayout(drawList, origin, $"OptiScaler {game.CurrentVersion}", SuccessColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        DrawInlinePillLayout(drawList, origin, GetFsrQuickPillText(game), string.IsNullOrWhiteSpace(game.FsrVersion) ? PanelBorderColor : InfoColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        DrawInlinePillLayout(drawList, origin, GetOptiPatcherQuickPillText(game), game.IsOptiPatcherInstalled ? SuccessColor : PanelBorderColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+    }
+
+    private static string GetFsrQuickPillText(GameInstance game)
+    {
+        return string.IsNullOrWhiteSpace(game.FsrVersion)
+            ? "FSR not detected"
+            : $"FSR {game.FsrVersion}";
+    }
+
+    private static string GetOptiPatcherQuickPillText(GameInstance game)
+    {
+        return game.IsOptiPatcherInstalled
+            ? "OptiPatcher installed"
+            : "OptiPatcher off";
+    }
+
+    private static void MeasureInlinePillLayout(string text, float maxWidth, ref float cursorX, ref float cursorY, ref float lineHeight)
+    {
+        LayoutInlinePill(Vector2.Zero, GetInlinePillSize(text), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+    }
+
+    private static void DrawInlinePillLayout(
+        ImDrawListPtr drawList,
+        Vector2 origin,
+        string text,
+        Vector4 accent,
+        float maxWidth,
+        ref float cursorX,
+        ref float cursorY,
+        ref float lineHeight)
+    {
+        var pillMin = LayoutInlinePill(origin, GetInlinePillSize(text), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        DrawInlinePill(drawList, pillMin, text, accent);
+    }
+
+    private static Vector2 LayoutInlinePill(
+        Vector2 origin,
+        Vector2 size,
+        float maxWidth,
+        ref float cursorX,
+        ref float cursorY,
+        ref float lineHeight)
+    {
+        var availableWidth = Math.Max(1f, maxWidth);
+        if (cursorX > 0f && cursorX + size.X > availableWidth)
+        {
+            cursorX = 0f;
+            cursorY += lineHeight + 8f;
+            lineHeight = 0f;
+        }
+
+        var min = new Vector2(origin.X + cursorX, origin.Y + cursorY);
+        cursorX += size.X + 8f;
+        lineHeight = MathF.Max(lineHeight, size.Y);
+        return min;
+    }
+
     private bool DrawSelectableRow(
         string id,
         string title,
@@ -2623,7 +2779,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         bool selected,
         Vector4 accent,
         string badge,
-        bool centerText = false)
+        bool centerText = false,
+        bool persistentIndicator = false)
     {
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
         var min = ImGui.GetCursorScreenPos();
@@ -2660,7 +2817,35 @@ public sealed class OptinstallerImGuiApp : IDisposable
         drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 2f);
         drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 2f, ImDrawFlags.None, 1f);
 
-        if (emphasis > 0.02f)
+        if (persistentIndicator)
+        {
+            if (selected)
+            {
+                drawList.AddLine(
+                    new Vector2(min.X + 8f, min.Y + 8f),
+                    new Vector2(min.X + 8f, max.Y - 8f),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.85f)),
+                    2f);
+            }
+            else
+            {
+                var indicatorWidth = 2f;
+                var indicatorHeight = 14f;
+                var indicatorCenter = new Vector2(min.X + 8f, min.Y + (rowHeight * 0.5f));
+                var indicatorHalfSize = new Vector2(indicatorWidth * 0.5f, indicatorHeight * 0.5f);
+                var indicatorMin = indicatorCenter - indicatorHalfSize;
+                var indicatorMax = indicatorCenter + indicatorHalfSize;
+
+                drawList.AddRect(
+                    indicatorMin,
+                    indicatorMax,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.34f)),
+                    indicatorWidth * 0.5f,
+                    ImDrawFlags.None,
+                    1f);
+            }
+        }
+        else if (emphasis > 0.02f)
         {
             drawList.AddLine(
                 new Vector2(min.X + 8f, min.Y + 8f),
