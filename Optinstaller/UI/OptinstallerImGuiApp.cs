@@ -93,9 +93,17 @@ public sealed class OptinstallerImGuiApp : IDisposable
         _selfHandle = GCHandle.Alloc(this);
         _hInstance = Win32Native.GetModuleHandle(null);
 
-        RegisterWindowClass();
-        CreateWindow();
-        _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, ApplyTheme);
+        try
+        {
+            RegisterWindowClass();
+            CreateWindow();
+            _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, ApplyTheme);
+        }
+        catch
+        {
+            PreserveImGuiContext(Dispose);
+            throw;
+        }
     }
 
     public void Run()
@@ -3231,12 +3239,20 @@ public sealed class OptinstallerImGuiApp : IDisposable
             _windowProcedureDelegate = WindowProcedure;
             _selfHandle = GCHandle.Alloc(this);
 
-            RegisterWindowClass();
-            CreateWindow(ownerHwnd, title);
-            _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, ApplyTheme);
+            try
+            {
+                RegisterWindowClass();
+                CreateWindow(ownerHwnd, title);
+                _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, ApplyTheme);
 
-            Win32Native.ShowWindow(_hwnd, Win32Native.SW_SHOW);
-            Win32Native.UpdateWindow(_hwnd);
+                Win32Native.ShowWindow(_hwnd, Win32Native.SW_SHOW);
+                Win32Native.UpdateWindow(_hwnd);
+            }
+            catch
+            {
+                PreserveImGuiContext(Dispose);
+                throw;
+            }
         }
 
         public bool IsClosed { get; private set; }
