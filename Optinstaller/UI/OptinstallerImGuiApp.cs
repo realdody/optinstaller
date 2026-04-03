@@ -2649,6 +2649,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         colors[(int)ImGuiCol.Header] = new Vector4(0.29f, 0.38f, 0.22f, 1f);
         colors[(int)ImGuiCol.HeaderHovered] = new Vector4(0.37f, 0.49f, 0.28f, 1f);
         colors[(int)ImGuiCol.HeaderActive] = new Vector4(0.45f, 0.58f, 0.33f, 1f);
+        colors[(int)ImGuiCol.NavCursor] = new Vector4(0.63f, 0.82f, 0.42f, 1f);
+        colors[(int)ImGuiCol.NavWindowingHighlight] = new Vector4(0.55f, 0.74f, 0.36f, 1f);
         colors[(int)ImGuiCol.CheckMark] = new Vector4(0.74f, 0.89f, 0.55f, 1f);
         colors[(int)ImGuiCol.SliderGrab] = new Vector4(0.55f, 0.74f, 0.36f, 1f);
         colors[(int)ImGuiCol.SliderGrabActive] = new Vector4(0.63f, 0.82f, 0.42f, 1f);
