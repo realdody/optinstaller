@@ -24,6 +24,7 @@ internal static class Win32Native
     public const uint DWMWA_BORDER_COLOR = 34;
     public const uint DWMWA_CAPTION_COLOR = 35;
     public const uint DWMWA_TEXT_COLOR = 36;
+    public const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
 
     public const uint WS_OVERLAPPED = 0x00000000;
     public const uint WS_CAPTION = 0x00C00000;
@@ -224,6 +225,15 @@ internal static class Win32Native
         public POINT ptMaxTrackSize;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct MONITORINFO
+    {
+        public uint cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct PAINTSTRUCT
     {
@@ -324,6 +334,13 @@ internal static class Win32Native
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetClientRect(nint hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern nint MonitorFromWindow(nint hWnd, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO lpmi);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern short GetKeyState(int nVirtKey);

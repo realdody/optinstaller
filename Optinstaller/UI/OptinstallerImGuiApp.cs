@@ -18,6 +18,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
 {
     private const int MinMainClientWidth = 1100;
     private const int MinMainClientHeight = 720;
+    private const int MinGameDetailsClientWidth = 840;
+    private const int MinGameDetailsClientHeight = 760;
+    private const string ConfirmationPopupId = "##ConfirmationPrompt";
     private const ImGuiWindowFlags PanelWindowFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
     private const ImGuiChildFlags PaddedPanelChildFlags = ImGuiChildFlags.Borders | ImGuiChildFlags.AlwaysUseWindowPadding;
 
@@ -63,12 +66,17 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private float _uiTime;
 
     private ConfirmationDialogState? _confirmation;
+    private ConfirmationHost? _confirmationHost;
+    private Vector2? _confirmationPopupPosition;
+    private Vector2 _confirmationPopupSize = new(460f, 0f);
+    private Vector2 _confirmationPopupDragOffset;
     private UpdateDialogState? _updateDialog;
     private ConfigDialogState? _configDialog;
     private InstallationDialogState? _installationDialog;
     private GameDetailsDialogState? _gameDetailsDialog;
 
-    private NativeWindowHost? _confirmationWindow;
+    private bool _isDraggingConfirmationPopup;
+    private bool _openConfirmationPopup;
     private NativeWindowHost? _updateWindow;
     private NativeWindowHost? _configWindow;
     private NativeWindowHost? _installationWindow;
@@ -129,7 +137,6 @@ public sealed class OptinstallerImGuiApp : IDisposable
             }
 
             renderedAnyWindow |= RenderNativeWindow(_gameDetailsWindow, delta);
-            renderedAnyWindow |= RenderNativeWindow(_confirmationWindow, delta);
             renderedAnyWindow |= RenderNativeWindow(_updateWindow, delta);
             renderedAnyWindow |= RenderNativeWindow(_configWindow, delta);
             renderedAnyWindow |= RenderNativeWindow(_installationWindow, delta);
@@ -419,8 +426,14 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private void CleanupClosedNativeWindows()
     {
-        CleanupClosedNativeWindow(ref _gameDetailsWindow, () => _gameDetailsDialog = null);
-        CleanupClosedNativeWindow(ref _confirmationWindow, () => _confirmation = null);
+        CleanupClosedNativeWindow(ref _gameDetailsWindow, () =>
+        {
+            _gameDetailsDialog = null;
+            if (_confirmationHost == ConfirmationHost.GameDetailsWindow)
+            {
+                CloseConfirmationDialog();
+            }
+        });
         CleanupClosedNativeWindow(ref _updateWindow, () => _updateDialog = null);
         CleanupClosedNativeWindow(ref _configWindow, () => _configDialog = null);
         CleanupClosedNativeWindow(ref _installationWindow, () => FinalizeInstallationDialog(showSuccessMessage: false));
@@ -429,7 +442,6 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private void DisposeNativeWindows()
     {
         DisposeNativeWindow(ref _gameDetailsWindow);
-        DisposeNativeWindow(ref _confirmationWindow);
         DisposeNativeWindow(ref _updateWindow);
         DisposeNativeWindow(ref _configWindow);
         DisposeNativeWindow(ref _installationWindow);
@@ -561,6 +573,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         RenderSidebar();
         ImGui.SameLine();
         RenderContent();
+        RenderConfirmationDialog(ConfirmationHost.MainWindow);
 
         ImGui.End();
         ImGui.PopStyleVar(3);
@@ -681,36 +694,98 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var (accent, background, label) = _notificationKind switch
         {
             NotificationKind.Success => (SuccessColor, new Vector4(0.17f, 0.22f, 0.15f, 1f), "Success"),
+            NotificationKind.Warning => (WarningColor, new Vector4(0.24f, 0.19f, 0.11f, 1f), "Warning"),
             NotificationKind.Error => (ErrorColor, new Vector4(0.24f, 0.14f, 0.13f, 1f), "Error"),
             _ => (InfoColor, new Vector4(0.18f, 0.21f, 0.16f, 1f), "Info"),
         };
 
+        var style = ImGui.GetStyle();
+        var dismissWidth = 90f;
+        var notificationText = $"{label}: {_notificationMessage}";
+        var availableWidth = MathF.Max(0f, ImGui.GetContentRegionAvail().X);
+        var innerWidth = MathF.Max(0f, availableWidth - (style.WindowPadding.X * 2f));
+        var stackedLayout = innerWidth < 560f;
+        var messageWidth = stackedLayout
+            ? innerWidth
+            : MathF.Max(120f, innerWidth - dismissWidth - style.ItemSpacing.X);
+        var messageSize = ImGui.CalcTextSize(notificationText, false, messageWidth);
+        var contentHeight = stackedLayout
+            ? messageSize.Y + style.ItemSpacing.Y + ImGui.GetFrameHeight()
+            : MathF.Max(messageSize.Y, ImGui.GetFrameHeight());
+        var bannerHeight = MathF.Max(58f, contentHeight + (style.WindowPadding.Y * 2f));
+
         ImGui.PushStyleColor(ImGuiCol.ChildBg, background);
         ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(accent.X, accent.Y, accent.Z, 0.55f));
 
-        ImGui.BeginChild("NotificationBanner", new Vector2(0f, 58f), PaddedPanelChildFlags, PanelWindowFlags);
-        if (ImGui.BeginTable("NotificationBannerTable", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings))
+        ImGui.BeginChild("NotificationBanner", new Vector2(0f, bannerHeight), PaddedPanelChildFlags, PanelWindowFlags);
+        var contentOrigin = ImGui.GetCursorPos();
+        var contentSize = ImGui.GetContentRegionAvail();
+        var verticalOffset = MathF.Max(0f, (contentSize.Y - contentHeight) * 0.5f);
+
+        ImGui.SetCursorPos(new Vector2(contentOrigin.X, contentOrigin.Y + verticalOffset));
+        ImGui.PushTextWrapPos(contentOrigin.X + messageWidth);
+        ImGui.TextWrapped(notificationText);
+        ImGui.PopTextWrapPos();
+
+        if (stackedLayout)
         {
-            ImGui.TableSetupColumn("Message", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn("Dismiss", ImGuiTableColumnFlags.WidthFixed, 90f);
+            var buttonX = contentOrigin.X + MathF.Max(0f, (contentSize.X - dismissWidth) * 0.5f);
+            var buttonY = contentOrigin.Y + verticalOffset + messageSize.Y + style.ItemSpacing.Y;
+            ImGui.SetCursorPos(new Vector2(buttonX, buttonY));
+        }
+        else
+        {
+            var buttonX = contentOrigin.X + MathF.Max(0f, contentSize.X - dismissWidth);
+            var buttonY = contentOrigin.Y + verticalOffset + MathF.Max(0f, (contentHeight - ImGui.GetFrameHeight()) * 0.5f);
+            ImGui.SetCursorPos(new Vector2(buttonX, buttonY));
+        }
 
-            ImGui.TableNextColumn();
-            ImGui.TextColored(accent, label);
-            ImGui.SameLine();
-            ImGui.TextWrapped(_notificationMessage);
-
-            ImGui.TableNextColumn();
-            if (ImGui.Button("Dismiss", new Vector2(-1f, 0f)))
-            {
-                _notificationMessage = null;
-            }
-
-            ImGui.EndTable();
+        if (ImGui.Button("Dismiss", new Vector2(dismissWidth, 0f)))
+        {
+            _notificationMessage = null;
         }
 
         ImGui.EndChild();
         ImGui.PopStyleColor(2);
         ImGui.Spacing();
+    }
+
+    private (int Width, int Height) GetGameDetailsClientSize()
+    {
+        var (workWidth, workHeight) = GetCurrentMonitorWorkAreaSize();
+        var maxWidth = Math.Max(600, workWidth - 120);
+        var maxHeight = Math.Max(520, workHeight - 120);
+        var minWidth = Math.Min(MinGameDetailsClientWidth, maxWidth);
+        var minHeight = Math.Min(MinGameDetailsClientHeight, maxHeight);
+
+        var width = Math.Clamp((int)MathF.Round(workWidth * 0.44f), minWidth, maxWidth);
+        var height = Math.Clamp((int)MathF.Round(workHeight * 0.72f), minHeight, maxHeight);
+        return (width, height);
+    }
+
+    private (int Width, int Height) GetCurrentMonitorWorkAreaSize()
+    {
+        var fallbackWidth = Math.Max(_windowWidth, MinGameDetailsClientWidth);
+        var fallbackHeight = Math.Max(_windowHeight, MinGameDetailsClientHeight);
+        var monitor = Win32Native.MonitorFromWindow(_hwnd, Win32Native.MONITOR_DEFAULTTONEAREST);
+        if (monitor == 0)
+        {
+            return (fallbackWidth, fallbackHeight);
+        }
+
+        var monitorInfo = new Win32Native.MONITORINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<Win32Native.MONITORINFO>(),
+        };
+
+        if (!Win32Native.GetMonitorInfo(monitor, ref monitorInfo))
+        {
+            return (fallbackWidth, fallbackHeight);
+        }
+
+        var workWidth = Math.Max(1, monitorInfo.rcWork.Right - monitorInfo.rcWork.Left);
+        var workHeight = Math.Max(1, monitorInfo.rcWork.Bottom - monitorInfo.rcWork.Top);
+        return (workWidth, workHeight);
     }
 
     private void RenderDashboard()
@@ -835,6 +910,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.Spacing();
         RenderSectionHeader("Details");
         RenderKeyValue("Game Path", game.GamePath);
+        if (!string.IsNullOrWhiteSpace(game.ExecutableName))
+        {
+            RenderKeyValue("Executable", game.ExecutableName);
+        }
 
         if (ImGui.BeginTable("GameDetailSummary", 3, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
         {
@@ -894,6 +973,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             if (ImGui.Button("Uninstall", new Vector2(uninstallWidth, 0f)))
             {
                 QueueConfirmation(
+                    ConfirmationHost.GameDetailsWindow,
                     $"Uninstall from {game.Name}",
                     "This removes OptiScaler files from the selected game but keeps the game in your library.",
                     "Uninstall",
@@ -906,6 +986,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         if (ImGui.Button("Remove From Library", new Vector2(removeWidth, 0f)))
         {
             QueueConfirmation(
+                ConfirmationHost.GameDetailsWindow,
                 $"Remove {game.Name}",
                 game.IsInstalled
                     ? "This removes the game from the library and uninstalls OptiScaler from it."
@@ -928,7 +1009,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16f, 14f));
-        ImGui.BeginChild("GameDetailsContent", new Vector2(0f, -54f), PaddedPanelChildFlags, PanelWindowFlags);
+        ImGui.BeginChild("GameDetailsContent", new Vector2(0f, -54f), PaddedPanelChildFlags);
         RenderGameDetails(_mainViewModel.Dashboard, _gameDetailsDialog.Game);
         ImGui.EndChild();
         ImGui.PopStyleVar();
@@ -938,6 +1019,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             CloseGameDetailsDialog();
         }
+
+        RenderConfirmationDialog(ConfirmationHost.GameDetailsWindow);
     }
 
     private void RenderVersionManager()
@@ -1053,10 +1136,6 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 _selectedVersionTag = version.TagName;
             }
 
-            if (version.IsDownloading)
-            {
-                ImGui.ProgressBar((float)(version.DownloadProgress / 100d), new Vector2(-1f, 4f));
-            }
         }
     }
 
@@ -1118,6 +1197,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             if (ImGui.Button("Delete", new Vector2(deleteWidth, 0f)))
             {
                 QueueConfirmation(
+                    ConfirmationHost.MainWindow,
                     $"Delete {version.TagName}",
                     "This removes the downloaded version from local storage.",
                     "Delete",
@@ -1455,7 +1535,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             {
                 ImGui.TextColored(InfoColor, "Games");
                 ImGui.TextUnformatted("Add a game to get started");
-                TextMuted("Choose a game folder, then pick a downloaded version when you are ready to install.");
+                TextMuted("Choose the game's executable, then pick a downloaded version when you are ready to install.");
                 ImGui.Spacing();
                 if (ImGui.Button("Add Game", new Vector2(120f, 0f)))
                 {
@@ -1674,20 +1754,52 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private void PromptAddGame()
     {
-        var selectedPath = NativeDialogs.PickFolder("Select Game Directory", _hwnd);
+        var selectedPath = NativeDialogs.PickFile(
+            "Select Game Executable",
+            "Executable Files (*.exe)|*.exe|All Files (*.*)|*.*",
+            _hwnd);
         if (string.IsNullOrWhiteSpace(selectedPath))
         {
             return;
         }
 
+        var selectedDirectory = Path.GetDirectoryName(selectedPath);
+        var suspectedUe5RootExecutable = !string.IsNullOrWhiteSpace(selectedDirectory) &&
+            Directory.Exists(Path.Combine(selectedDirectory, "Engine"));
+
         StartUiTask(async () =>
         {
-            var added = await _mainViewModel.Dashboard.AddGameFromPath(selectedPath);
-            SetNotification(
-                added
-                    ? $"Added {selectedPath}."
-                    : "That folder is already in the library or could not be used.",
-                added ? NotificationKind.Success : NotificationKind.Info);
+            var addedGame = await _mainViewModel.Dashboard.AddGameFromExecutable(selectedPath);
+            if (addedGame != null)
+            {
+                var resolvedExecutablePath = string.IsNullOrWhiteSpace(addedGame.ExecutableName)
+                    ? null
+                    : Path.Combine(addedGame.GamePath, addedGame.ExecutableName);
+                var autoDetectedUnrealExecutable = suspectedUe5RootExecutable &&
+                    !string.IsNullOrWhiteSpace(resolvedExecutablePath) &&
+                    !Path.GetFullPath(selectedPath).Equals(Path.GetFullPath(resolvedExecutablePath), StringComparison.OrdinalIgnoreCase);
+
+                if (autoDetectedUnrealExecutable)
+                {
+                    SetNotification(
+                        $"Added {addedGame.Name}. Auto-detected the Unreal executable as {addedGame.ExecutableName}. If that's not the right one, remove it and pick the correct exe from the game's Binaries\\Win64 folder.",
+                        NotificationKind.Warning);
+                    return;
+                }
+
+                if (suspectedUe5RootExecutable)
+                {
+                    SetNotification(
+                        $"Added {addedGame.Name}. This might still be a UE5 root executable. If so, use the exe in the game's Binaries\\Win64 folder instead, usually the one with Win64 in the name.",
+                        NotificationKind.Warning);
+                    return;
+                }
+
+                SetNotification($"Added {addedGame.Name}.", NotificationKind.Success);
+                return;
+            }
+
+            SetNotification("That executable's folder is already in the library or could not be used.", NotificationKind.Info);
         }, "Could not add the selected game");
     }
 
@@ -1723,12 +1835,123 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.TextDisabled(label);
     }
 
-    private void RenderConfirmationWindow()
+    private static Vector2 ClampWindowPositionToViewport(Vector2 windowPos, Vector2 windowSize)
     {
-        if (_confirmation == null)
+        var viewport = ImGui.GetMainViewport();
+        var minPos = viewport.WorkPos;
+        var maxPos = new Vector2(
+            viewport.WorkPos.X + Math.Max(0f, viewport.WorkSize.X - windowSize.X),
+            viewport.WorkPos.Y + Math.Max(0f, viewport.WorkSize.Y - windowSize.Y));
+        return new Vector2(
+            Math.Clamp(windowPos.X, minPos.X, maxPos.X),
+            Math.Clamp(windowPos.Y, minPos.Y, maxPos.Y));
+    }
+
+    private void UpdateConfirmationPopupPositionFromDrag()
+    {
+        if (!_confirmationPopupPosition.HasValue || !_isDraggingConfirmationPopup)
         {
             return;
         }
+
+        if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
+        {
+            _isDraggingConfirmationPopup = false;
+            return;
+        }
+
+        var desiredPos = ImGui.GetIO().MousePos - _confirmationPopupDragOffset;
+        _confirmationPopupPosition = ClampWindowPositionToViewport(desiredPos, _confirmationPopupSize);
+    }
+
+    private void RenderConfirmationDialogHeader()
+    {
+        if (_confirmation == null || !_confirmationPopupPosition.HasValue)
+        {
+            return;
+        }
+
+        var style = ImGui.GetStyle();
+        var windowPos = ImGui.GetWindowPos();
+        var windowSize = ImGui.GetWindowSize();
+        var contentWidth = Math.Max(1f, windowSize.X - (style.WindowPadding.X * 2f));
+        var headerMin = windowPos;
+        var headerHeight = Math.Max(34f, ImGui.GetFrameHeight() + 8f);
+        var headerSize = new Vector2(contentWidth, headerHeight);
+        var headerMax = headerMin + headerSize;
+        var headerDrawMax = new Vector2(windowPos.X + windowSize.X, headerMax.Y);
+        var drawList = ImGui.GetWindowDrawList();
+
+        drawList.AddRectFilled(headerMin, headerDrawMax, ImGui.ColorConvertFloat4ToU32(PanelRaisedBackgroundColor), 0f);
+        drawList.AddLine(
+            new Vector2(headerMin.X, headerMax.Y - 1f),
+            new Vector2(headerDrawMax.X, headerMax.Y - 1f),
+            ImGui.ColorConvertFloat4ToU32(PanelBorderColor));
+
+        var titleSize = ImGui.CalcTextSize(_confirmation.Title);
+        var titlePos = new Vector2(
+            headerMin.X + style.WindowPadding.X,
+            headerMin.Y + ((headerSize.Y - titleSize.Y) * 0.5f));
+
+        drawList.AddText(titlePos, ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 1f)), _confirmation.Title);
+
+        ImGui.SetCursorScreenPos(new Vector2(windowPos.X + style.WindowPadding.X, headerMin.Y));
+        ImGui.InvisibleButton("##ConfirmationDragHandle", headerSize);
+        if (ImGui.IsItemActivated())
+        {
+            _isDraggingConfirmationPopup = true;
+            _confirmationPopupDragOffset = ImGui.GetIO().MousePos - _confirmationPopupPosition.Value;
+        }
+
+        ImGui.SetCursorScreenPos(new Vector2(
+            windowPos.X + style.WindowPadding.X,
+            windowPos.Y + headerHeight + style.ItemSpacing.Y));
+    }
+
+    private void RenderConfirmationDialog(ConfirmationHost host)
+    {
+        if (_confirmation == null || _confirmationHost != host)
+        {
+            return;
+        }
+
+        var popupId = $"{_confirmation.Title}{ConfirmationPopupId}";
+        if (_openConfirmationPopup)
+        {
+            ImGui.OpenPopup(popupId);
+            _confirmationPopupPosition = null;
+            _confirmationPopupSize = new Vector2(460f, 0f);
+            _confirmationPopupDragOffset = Vector2.Zero;
+            _isDraggingConfirmationPopup = false;
+            _openConfirmationPopup = false;
+        }
+
+        var viewport = ImGui.GetMainViewport();
+        var center = new Vector2(
+            viewport.WorkPos.X + (viewport.WorkSize.X * 0.5f),
+            viewport.WorkPos.Y + (viewport.WorkSize.Y * 0.5f));
+
+        UpdateConfirmationPopupPositionFromDrag();
+        if (_confirmationPopupPosition.HasValue)
+        {
+            ImGui.SetNextWindowPos(_confirmationPopupPosition.Value, ImGuiCond.Always);
+        }
+        else
+        {
+            ImGui.SetNextWindowPos(center, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+        }
+
+        ImGui.SetNextWindowSize(new Vector2(460f, 0f), ImGuiCond.Appearing);
+
+        if (!ImGui.BeginPopupModal(popupId, ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoTitleBar))
+        {
+            return;
+        }
+
+        _confirmationPopupSize = ImGui.GetWindowSize();
+        _confirmationPopupPosition = ClampWindowPositionToViewport(ImGui.GetWindowPos(), _confirmationPopupSize);
+
+        RenderConfirmationDialogHeader();
 
         ImGui.TextWrapped(_confirmation.Message);
         ImGui.Spacing();
@@ -1747,14 +1970,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 }
             }, $"{_confirmation.Title} failed");
 
+            ImGui.CloseCurrentPopup();
             CloseConfirmationDialog();
         }
 
         ImGui.SameLine();
         if (ImGui.Button("Cancel", new Vector2(110f, 0f)))
         {
+            ImGui.CloseCurrentPopup();
             CloseConfirmationDialog();
         }
+
+        ImGui.EndPopup();
     }
 
     private void RenderUpdateWindow()
@@ -1958,7 +2185,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 if (wizard.ShowEngineWarning)
                 {
                     ImGui.Spacing();
-                    ImGui.TextColored(WarningColor, "Engine folder detected. Unreal Engine installs usually belong in Binaries\\Win64.");
+                    ImGui.TextColored(WarningColor, "Engine folder detected. Open the folder with the game's name, then Binaries\\Win64, and choose the shipping exe, usually the one with Win64-Shipping in the name.");
                 }
                 break;
 
@@ -2063,13 +2290,21 @@ public sealed class OptinstallerImGuiApp : IDisposable
             Game = game,
         };
 
+        var (detailsWidth, detailsHeight) = GetGameDetailsClientSize();
+
         if (_gameDetailsWindow == null || _gameDetailsWindow.IsClosed)
         {
             _gameDetailsWindow = PreserveImGuiContext(() =>
-                CreateNativeWindow($"Game Details - {game.Name}", 760, 560, "GameDetailsRoot", RenderGameDetailsWindow));
+                CreateNativeWindow(
+                    $"Game Details - {game.Name}",
+                    detailsWidth,
+                    detailsHeight,
+                    "GameDetailsRoot",
+                    RenderGameDetailsWindow));
             return;
         }
 
+        _gameDetailsWindow.SetMinClientSize(detailsWidth, detailsHeight);
         _gameDetailsWindow.SetTitle($"Game Details - {game.Name}");
         _gameDetailsWindow.Focus();
     }
@@ -2169,14 +2404,15 @@ public sealed class OptinstallerImGuiApp : IDisposable
         });
     }
 
-    private void QueueConfirmation(string title, string message, string confirmLabel, Func<Task> confirmAction, string? successMessage)
+    private void QueueConfirmation(ConfirmationHost host, string title, string message, string confirmLabel, Func<Task> confirmAction, string? successMessage)
     {
         _confirmation = new ConfirmationDialogState(title, message, confirmLabel, confirmAction, successMessage);
-        PreserveImGuiContext(() =>
-        {
-            _confirmationWindow?.Dispose();
-            _confirmationWindow = CreateNativeWindow(title, 460, 220, "ConfirmationRoot", RenderConfirmationWindow);
-        });
+        _confirmationHost = host;
+        _confirmationPopupPosition = null;
+        _confirmationPopupSize = new Vector2(460f, 0f);
+        _confirmationPopupDragOffset = Vector2.Zero;
+        _isDraggingConfirmationPopup = false;
+        _openConfirmationPopup = true;
     }
 
     private void CloseGameDetailsDialog()
@@ -2187,7 +2423,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private void CloseConfirmationDialog()
     {
         _confirmation = null;
-        _confirmationWindow?.RequestClose();
+        _confirmationHost = null;
+        _confirmationPopupPosition = null;
+        _confirmationPopupDragOffset = Vector2.Zero;
+        _isDraggingConfirmationPopup = false;
+        _openConfirmationPopup = false;
     }
 
     private void CloseUpdateDialog()
@@ -2228,7 +2468,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         _notificationMessage = message;
         _notificationKind = kind;
-        _notificationExpiresAt = DateTime.UtcNow.AddSeconds(kind == NotificationKind.Error ? 12 : 6);
+        _notificationExpiresAt = DateTime.UtcNow.AddSeconds(kind switch
+        {
+            NotificationKind.Error => 12,
+            NotificationKind.Warning => 8,
+            _ => 6,
+        });
     }
 
     private int CountInstalledGames()
@@ -2664,8 +2909,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         private readonly nint _hInstance;
         private readonly Action _renderContent;
         private readonly Func<bool>? _canClose;
-        private readonly int _minClientWidth;
-        private readonly int _minClientHeight;
+        private int _minClientWidth;
+        private int _minClientHeight;
         private readonly string _windowClassName = $"OptinstallerNativeWindowClass_{Guid.NewGuid():N}";
         private readonly Win32Native.WndProcDelegate _windowProcedureDelegate;
 
@@ -2703,6 +2948,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
         public bool IsClosed { get; private set; }
 
         public bool IsInSizeMove => _isInSizeMove;
+
+        public void SetMinClientSize(int width, int height)
+        {
+            _minClientWidth = Math.Max(1, width);
+            _minClientHeight = Math.Max(1, height);
+        }
 
         public bool RenderFrame(float delta, bool enableVsync = true)
         {
@@ -2991,6 +3242,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
         Func<Task> ConfirmAction,
         string? SuccessMessage);
 
+    private enum ConfirmationHost
+    {
+        MainWindow,
+        GameDetailsWindow,
+    }
+
     private sealed class UpdateDialogState
     {
         public required GameInstance Game { get; init; }
@@ -3028,6 +3285,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         Info,
         Success,
+        Warning,
         Error,
     }
 }
