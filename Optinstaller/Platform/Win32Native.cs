@@ -47,6 +47,7 @@ internal static class Win32Native
     public const uint WM_GETMINMAXINFO = 0x0024;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_QUIT = 0x0012;
+    public const uint WM_SETICON = 0x0080;
     public const uint WM_SETCURSOR = 0x0020;
     public const uint WM_ERASEBKGND = 0x0014;
     public const uint WM_SYSCOMMAND = 0x0112;
@@ -78,6 +79,15 @@ internal static class Win32Native
     public const uint SC_KEYMENU = 0xF100;
 
     public const int IDC_ARROW = 32512;
+    public const int IMAGE_ICON = 1;
+    public const uint LR_LOADFROMFILE = 0x0010;
+    public const uint LR_DEFAULTSIZE = 0x0040;
+    public const int SM_CXICON = 11;
+    public const int SM_CYICON = 12;
+    public const int SM_CXSMICON = 49;
+    public const int SM_CYSMICON = 50;
+    public static readonly nuint ICON_SMALL = 0;
+    public static readonly nuint ICON_BIG = 1;
 
     public const int VK_TAB = 0x09;
     public const int VK_LEFT = 0x25;
@@ -348,6 +358,16 @@ internal static class Win32Native
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint LoadCursor(nint hInstance, nint lpCursorName);
 
+    [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint LoadImage(nint hInst, string name, uint type, int cx, int cy, uint fuLoad);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern int GetSystemMetrics(int nIndex);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DestroyIcon(nint hIcon);
+
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
 
@@ -357,6 +377,9 @@ internal static class Win32Native
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool PostMessage(nint hWnd, uint msg, nuint wParam, nint lParam);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint SendMessage(nint hWnd, uint msg, nuint wParam, nint lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint SetCapture(nint hWnd);

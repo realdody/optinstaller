@@ -35,6 +35,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private static readonly Vector4 PanelBorderColor = new(0.34f, 0.39f, 0.31f, 1f);
     private static readonly Vector4 PrimaryTextColor = new(0.94f, 0.95f, 0.92f, 1f);
     private static readonly Win32Native.WndProcDelegate WindowProcedureDelegate = WindowProcedure;
+    private static readonly string AppIconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "logo.ico");
+    private static nint _largeAppIcon;
+    private static nint _smallAppIcon;
+    private static bool _appIconsLoaded;
 
     private readonly UiSynchronizationContext _syncContext;
     private readonly MainWindowViewModel _mainViewModel = new();
@@ -205,6 +209,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
             _classRegistered = false;
         }
 
+        ReleaseAppIcons();
+
         if (_selfHandle.IsAllocated)
         {
             _selfHandle.Free();
@@ -225,15 +231,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private void RegisterWindowClass()
     {
+        var (largeIcon, smallIcon) = GetAppIcons();
         var windowClass = new Win32Native.WNDCLASSEXW
         {
             cbSize = (uint)Marshal.SizeOf<Win32Native.WNDCLASSEXW>(),
             style = Win32Native.CS_HREDRAW | Win32Native.CS_VREDRAW | Win32Native.CS_OWNDC,
             lpfnWndProc = WindowProcedureDelegate,
             hInstance = _hInstance,
+            hIcon = largeIcon,
             hCursor = Win32Native.LoadCursor(IntPtr.Zero, (nint)Win32Native.IDC_ARROW),
             hbrBackground = Win32Native.DarkBackgroundBrush,
             lpszClassName = _windowClassName,
+            hIconSm = smallIcon,
         };
 
         if (Win32Native.RegisterClassEx(ref windowClass) == 0)
@@ -276,6 +285,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         Win32Native.ApplyDarkWindowTheme(_hwnd);
+        ApplyWindowIcons(_hwnd);
         Win32Native.SetWindowText(_hwnd, WindowTitle);
 
         if (Win32Native.GetClientRect(_hwnd, out var clientRect))
@@ -400,6 +410,85 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         return Win32Native.DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    private static (nint LargeIcon, nint SmallIcon) GetAppIcons()
+    {
+        EnsureAppIconsLoaded();
+        return (_largeAppIcon, _smallAppIcon);
+    }
+
+    private static void ApplyWindowIcons(nint hwnd)
+    {
+        if (hwnd == 0)
+        {
+            return;
+        }
+
+        var (largeIcon, smallIcon) = GetAppIcons();
+        if (largeIcon != 0)
+        {
+            Win32Native.SendMessage(hwnd, Win32Native.WM_SETICON, Win32Native.ICON_BIG, largeIcon);
+        }
+
+        if (smallIcon != 0)
+        {
+            Win32Native.SendMessage(hwnd, Win32Native.WM_SETICON, Win32Native.ICON_SMALL, smallIcon);
+        }
+    }
+
+    private static void EnsureAppIconsLoaded()
+    {
+        if (_appIconsLoaded)
+        {
+            return;
+        }
+
+        _appIconsLoaded = true;
+        if (!File.Exists(AppIconPath))
+        {
+            return;
+        }
+
+        _largeAppIcon = LoadAppIcon(Win32Native.SM_CXICON, Win32Native.SM_CYICON);
+        _smallAppIcon = LoadAppIcon(Win32Native.SM_CXSMICON, Win32Native.SM_CYSMICON);
+
+        if (_smallAppIcon == 0)
+        {
+            _smallAppIcon = _largeAppIcon;
+        }
+    }
+
+    private static nint LoadAppIcon(int widthMetric, int heightMetric)
+    {
+        var width = Math.Max(0, Win32Native.GetSystemMetrics(widthMetric));
+        var height = Math.Max(0, Win32Native.GetSystemMetrics(heightMetric));
+        return Win32Native.LoadImage(
+            IntPtr.Zero,
+            AppIconPath,
+            Win32Native.IMAGE_ICON,
+            width,
+            height,
+            Win32Native.LR_LOADFROMFILE | Win32Native.LR_DEFAULTSIZE);
+    }
+
+    private static void ReleaseAppIcons()
+    {
+        var largeIcon = _largeAppIcon;
+        var smallIcon = _smallAppIcon;
+        _largeAppIcon = 0;
+        _smallAppIcon = 0;
+        _appIconsLoaded = false;
+
+        if (largeIcon != 0)
+        {
+            Win32Native.DestroyIcon(largeIcon);
+        }
+
+        if (smallIcon != 0 && smallIcon != largeIcon)
+        {
+            Win32Native.DestroyIcon(smallIcon);
+        }
     }
 
     private void RequestClose()
@@ -3232,15 +3321,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         private void RegisterWindowClass()
         {
+            var (largeIcon, smallIcon) = GetAppIcons();
             var windowClass = new Win32Native.WNDCLASSEXW
             {
                 cbSize = (uint)Marshal.SizeOf<Win32Native.WNDCLASSEXW>(),
                 style = Win32Native.CS_HREDRAW | Win32Native.CS_VREDRAW | Win32Native.CS_OWNDC,
                 lpfnWndProc = _windowProcedureDelegate,
                 hInstance = _hInstance,
+                hIcon = largeIcon,
                 hCursor = Win32Native.LoadCursor(IntPtr.Zero, (nint)Win32Native.IDC_ARROW),
                 hbrBackground = Win32Native.DarkBackgroundBrush,
                 lpszClassName = _windowClassName,
+                hIconSm = smallIcon,
             };
 
             if (Win32Native.RegisterClassEx(ref windowClass) == 0)
@@ -3283,6 +3375,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             }
 
             Win32Native.ApplyDarkWindowTheme(_hwnd);
+            ApplyWindowIcons(_hwnd);
 
             if (Win32Native.GetClientRect(_hwnd, out var clientRect))
             {
