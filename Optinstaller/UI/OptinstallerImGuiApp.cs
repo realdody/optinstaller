@@ -838,8 +838,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var contentOrigin = ImGui.GetCursorPos();
         var contentSize = ImGui.GetContentRegionAvail();
         var verticalOffset = MathF.Max(0f, (contentSize.Y - contentHeight) * 0.5f);
+        var messageY = contentOrigin.Y + verticalOffset;
+        if (!stackedLayout)
+        {
+            messageY += MathF.Max(0f, (contentHeight - messageSize.Y) * 0.5f);
+        }
 
-        ImGui.SetCursorPos(new Vector2(contentOrigin.X, contentOrigin.Y + verticalOffset));
+        ImGui.SetCursorPos(new Vector2(contentOrigin.X, messageY));
         ImGui.PushTextWrapPos(contentOrigin.X + messageWidth);
         ImGui.TextWrapped(notificationText);
         ImGui.PopTextWrapPos();
@@ -1398,7 +1403,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         ImGui.Spacing();
-        if (ImGui.Button("Open Releases Page", new Vector2(160f, 0f)))
+        if (DrawCenteredButton("Settings.OpenReleasesPage", "Open Releases Page", new Vector2(160f, 0f)))
         {
             TryOpenExternalUrl(settings.OptiScalerDownloadUrl);
         }
@@ -3008,6 +3013,24 @@ public sealed class OptinstallerImGuiApp : IDisposable
         return MathF.Max(minWidth, MathF.Ceiling(paddedTextWidth));
     }
 
+    private static bool DrawCenteredButton(string id, string label, Vector2 size)
+    {
+        var clicked = ImGui.Button($"##{id}", size);
+        var min = ImGui.GetItemRectMin();
+        var max = ImGui.GetItemRectMax();
+        var textSize = ImGui.CalcTextSize(label);
+        var textPos = new Vector2(
+            min.X + MathF.Max(0f, ((max.X - min.X) - textSize.X) * 0.5f),
+            min.Y + MathF.Max(0f, ((max.Y - min.Y) - textSize.Y) * 0.5f));
+
+        ImGui.GetWindowDrawList().AddText(
+            textPos,
+            ImGui.ColorConvertFloat4ToU32(ImGui.GetStyle().Colors[(int)ImGuiCol.Text]),
+            label);
+
+        return clicked;
+    }
+
     private static void ContinueOnSameLineIfFits(float nextItemWidth)
     {
         var nextItemRight = ImGui.GetItemRectMax().X + ImGui.GetStyle().ItemSpacing.X + nextItemWidth;
@@ -3175,6 +3198,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         style.FramePadding = new Vector2(9f, 6f);
         style.ItemSpacing = new Vector2(10f, 9f);
         style.ItemInnerSpacing = new Vector2(8f, 5f);
+        style.ButtonTextAlign = new Vector2(0.5f, 0.5f);
         style.AntiAliasedFill = true;
         style.AntiAliasedLines = true;
         style.AntiAliasedLinesUseTex = true;
@@ -3306,7 +3330,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             if (_hwnd != 0)
             {
-                Win32Native.SetWindowText(_hwnd, title);
+                PreserveImGuiContext(() => Win32Native.SetWindowText(_hwnd, title));
             }
         }
 
@@ -3317,8 +3341,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 return;
             }
 
-            Win32Native.ShowWindow(_hwnd, Win32Native.SW_SHOW);
-            Win32Native.SetForegroundWindow(_hwnd);
+            PreserveImGuiContext(() =>
+            {
+                Win32Native.ShowWindow(_hwnd, Win32Native.SW_SHOW);
+                Win32Native.SetForegroundWindow(_hwnd);
+            });
         }
 
         public void RequestClose()
