@@ -507,8 +507,9 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         var previousIsInstalled = game.IsInstalled;
         var previousInstalledFilename = game.InstalledFilename;
         var previousVersion = game.CurrentVersion;
-        var previousFsrVersion = game.FsrVersion;
-        var previousIsOptiPatcherInstalled = game.IsOptiPatcherInstalled;
+        var fallbackVersion = string.IsNullOrWhiteSpace(selectedVersion.TagName)
+            ? previousVersion
+            : selectedVersion.TagName;
 
         var isInstalled = _optiScalerService.IsInstalled(game.GamePath, out var installedFilename, out var newVersion, out var fsrVersion, out var isOptiPatcherInstalled);
         var redetectFailed = (!isInstalled && previousIsInstalled) ||
@@ -517,7 +518,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
         if (redetectFailed)
         {
-            ApplyInstallationState(game, previousIsInstalled, previousInstalledFilename, previousVersion, previousFsrVersion, previousIsOptiPatcherInstalled);
+            ApplyInstallationState(game, previousIsInstalled, previousInstalledFilename, fallbackVersion, string.Empty, false);
             return;
         }
 

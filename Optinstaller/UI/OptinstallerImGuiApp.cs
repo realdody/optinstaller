@@ -3030,19 +3030,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private static bool DrawCenteredButton(string id, string label, Vector2 size)
     {
-        var clicked = ImGui.Button($"##{id}", size);
-        var min = ImGui.GetItemRectMin();
-        var max = ImGui.GetItemRectMax();
-        var textSize = ImGui.CalcTextSize(label);
-        var textPos = new Vector2(
-            min.X + MathF.Max(0f, ((max.X - min.X) - textSize.X) * 0.5f),
-            min.Y + MathF.Max(0f, ((max.Y - min.Y) - textSize.Y) * 0.5f));
-
-        ImGui.GetWindowDrawList().AddText(
-            textPos,
-            ImGui.ColorConvertFloat4ToU32(ImGui.GetStyle().Colors[(int)ImGuiCol.Text]),
-            label);
-
+        ImGui.PushID(id);
+        ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
+        var clicked = ImGui.Button(label, size);
+        ImGui.PopStyleVar();
+        ImGui.PopID();
         return clicked;
     }
 

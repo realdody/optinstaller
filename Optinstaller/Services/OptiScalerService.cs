@@ -139,6 +139,7 @@ public class OptiScalerService
 
     private static bool IsKnownFsr4Int8Binary(long fileLength, string? rawFileVersion)
     {
+        // This size floor is based on the FSR 4.0.2 Int8 DLL used as the current reference build.
         if (fileLength < 30_000_000)
         {
             return false;
