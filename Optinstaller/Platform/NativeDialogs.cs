@@ -168,10 +168,10 @@ public static class NativeDialogs
     {
         if (string.IsNullOrWhiteSpace(filter))
         {
-            return "All Files (*.*)\0*.*\0";
+            return "All Files (*.*)\0*.*\0\0";
         }
 
-        return filter.Replace('|', '\0').TrimEnd('\0') + "\0";
+        return filter.Replace('|', '\0').TrimEnd('\0') + "\0\0";
     }
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]

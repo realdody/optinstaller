@@ -192,7 +192,7 @@ public class OptiScalerService
                 var pluginsDir = Path.Combine(gamePath, "plugins");
                 if (!Directory.Exists(pluginsDir)) Directory.CreateDirectory(pluginsDir);
 
-                var patcherDest = Path.Combine(pluginsDir, "OptiPatcher.asi");
+                var patcherDest = Path.Combine(gamePath, OptiPatcherRelativePath);
                 
                 using var client = new HttpClient();
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("Optinstaller");
@@ -240,7 +240,7 @@ public class OptiScalerService
         sb.AppendLine("    if exist \"fakenvapi.log\" del \"fakenvapi.log\"");
         sb.AppendLine("    if exist \"dlssg_to_fsr3_amd_is_better.dll\" del \"dlssg_to_fsr3_amd_is_better.dll\"");
         sb.AppendLine("    if exist \"dlssg_to_fsr3.log\" del \"dlssg_to_fsr3.log\"");
-        sb.AppendLine("    if exist \"plugins\\OptiPatcher.asi\" del \"plugins\\OptiPatcher.asi\"");
+        sb.AppendLine($"    if exist \"{OptiPatcherRelativePath}\" del \"{OptiPatcherRelativePath}\"");
         sb.AppendLine("    if exist \"plugins\" rmdir \"plugins\"");
         sb.AppendLine("    if exist \"D3D12_Optiscaler\" rmdir /s /q \"D3D12_Optiscaler\"");
         sb.AppendLine("    if exist \"DlssOverrides\" rmdir /s /q \"DlssOverrides\"");

@@ -36,6 +36,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private static readonly Vector4 PrimaryTextColor = new(0.94f, 0.95f, 0.92f, 1f);
     private static readonly Win32Native.WndProcDelegate WindowProcedureDelegate = WindowProcedure;
     private static readonly string AppIconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "logo.ico");
+    private static readonly object AppIconSync = new();
     private static nint _largeAppIcon;
     private static nint _smallAppIcon;
     private static bool _appIconsLoaded;
@@ -209,6 +210,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             _classRegistered = false;
         }
 
+        Win32Native.ReleaseDarkBackgroundBrush();
         ReleaseAppIcons();
 
         if (_selfHandle.IsAllocated)
@@ -444,18 +446,26 @@ public sealed class OptinstallerImGuiApp : IDisposable
             return;
         }
 
-        _appIconsLoaded = true;
-        if (!File.Exists(AppIconPath))
+        lock (AppIconSync)
         {
-            return;
-        }
+            if (_appIconsLoaded)
+            {
+                return;
+            }
 
-        _largeAppIcon = LoadAppIcon(Win32Native.SM_CXICON, Win32Native.SM_CYICON);
-        _smallAppIcon = LoadAppIcon(Win32Native.SM_CXSMICON, Win32Native.SM_CYSMICON);
+            _appIconsLoaded = true;
+            if (!File.Exists(AppIconPath))
+            {
+                return;
+            }
 
-        if (_smallAppIcon == 0)
-        {
-            _smallAppIcon = _largeAppIcon;
+            _largeAppIcon = LoadAppIcon(Win32Native.SM_CXICON, Win32Native.SM_CYICON);
+            _smallAppIcon = LoadAppIcon(Win32Native.SM_CXSMICON, Win32Native.SM_CYSMICON);
+
+            if (_smallAppIcon == 0)
+            {
+                _smallAppIcon = _largeAppIcon;
+            }
         }
     }
 
@@ -474,11 +484,17 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private static void ReleaseAppIcons()
     {
-        var largeIcon = _largeAppIcon;
-        var smallIcon = _smallAppIcon;
-        _largeAppIcon = 0;
-        _smallAppIcon = 0;
-        _appIconsLoaded = false;
+        nint largeIcon;
+        nint smallIcon;
+
+        lock (AppIconSync)
+        {
+            largeIcon = _largeAppIcon;
+            smallIcon = _smallAppIcon;
+            _largeAppIcon = 0;
+            _smallAppIcon = 0;
+            _appIconsLoaded = false;
+        }
 
         if (largeIcon != 0)
         {
@@ -1886,7 +1902,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 return;
             }
 
-            SetNotification("That executable's folder is already in the library or could not be used.", NotificationKind.Info);
+            SetNotification("That executable's folder is already in the library.", NotificationKind.Info);
         }, "Could not add the selected game");
     }
 
@@ -3495,6 +3511,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
                     }
 
                     IsClosed = true;
+                    if (_isRenderingFrame)
+                    {
+                        return 0;
+                    }
+
                     if (_hwnd != 0)
                     {
                         var handleToDestroy = _hwnd;

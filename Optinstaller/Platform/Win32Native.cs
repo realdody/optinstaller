@@ -5,7 +5,24 @@ namespace Optinstaller.Platform;
 
 internal static class Win32Native
 {
-    internal static readonly nint DarkBackgroundBrush = CreateSolidBrush(ToColorRef(43, 46, 49));
+    private static readonly object DarkBackgroundBrushSync = new();
+    private static nint _darkBackgroundBrush;
+
+    internal static nint DarkBackgroundBrush
+    {
+        get
+        {
+            lock (DarkBackgroundBrushSync)
+            {
+                if (_darkBackgroundBrush == 0)
+                {
+                    _darkBackgroundBrush = CreateSolidBrush(ToColorRef(43, 46, 49));
+                }
+
+                return _darkBackgroundBrush;
+            }
+        }
+    }
 
     public const int CW_USEDEFAULT = unchecked((int)0x80000000);
 
@@ -390,6 +407,24 @@ internal static class Win32Native
 
     [DllImport("gdi32.dll", SetLastError = true)]
     internal static extern nint CreateSolidBrush(uint color);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DeleteObject(nint hObject);
+
+    internal static void ReleaseDarkBackgroundBrush()
+    {
+        lock (DarkBackgroundBrushSync)
+        {
+            if (_darkBackgroundBrush == 0)
+            {
+                return;
+            }
+
+            DeleteObject(_darkBackgroundBrush);
+            _darkBackgroundBrush = 0;
+        }
+    }
 
     internal static void ApplyDarkWindowTheme(nint hwnd)
     {

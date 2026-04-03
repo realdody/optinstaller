@@ -131,16 +131,23 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             return null;
         }
 
-        var executablePath = ResolveSelectedExecutablePath(Path.GetFullPath(rawExecutablePath));
+        var selectedPath = Path.GetFullPath(rawExecutablePath);
+        if (!File.Exists(selectedPath) ||
+            !string.Equals(Path.GetExtension(selectedPath), ".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Select a valid .exe file.");
+        }
+
+        var executablePath = ResolveSelectedExecutablePath(selectedPath);
         if (string.IsNullOrWhiteSpace(executablePath))
         {
-            return null;
+            throw new InvalidOperationException("Could not determine a usable game executable from the selected file.");
         }
 
         var gamePath = Path.GetDirectoryName(executablePath);
         if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
         {
-            return null;
+            throw new InvalidOperationException("Could not determine the game folder from the selected executable.");
         }
 
         var normalizedPath = NormalizeGamePath(gamePath);
@@ -497,13 +504,24 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             _optiScalerService.UpdateDll(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
         });
 
-        var isInstalled = _optiScalerService.IsInstalled(game.GamePath, out var installedFilename, out var newVersion, out var fsrVersion, out var isOptiPatcherInstalled);
-        ApplyInstallationState(game, isInstalled, installedFilename, newVersion, fsrVersion, isOptiPatcherInstalled);
+        var previousIsInstalled = game.IsInstalled;
+        var previousInstalledFilename = game.InstalledFilename;
+        var previousVersion = game.CurrentVersion;
+        var previousFsrVersion = game.FsrVersion;
+        var previousIsOptiPatcherInstalled = game.IsOptiPatcherInstalled;
 
-        if (!game.IsInstalled)
+        var isInstalled = _optiScalerService.IsInstalled(game.GamePath, out var installedFilename, out var newVersion, out var fsrVersion, out var isOptiPatcherInstalled);
+        var redetectFailed = (!isInstalled && previousIsInstalled) ||
+            string.IsNullOrWhiteSpace(installedFilename) ||
+            string.IsNullOrWhiteSpace(newVersion);
+
+        if (redetectFailed)
         {
-            game.CurrentVersion = selectedVersion.TagName;
+            ApplyInstallationState(game, previousIsInstalled, previousInstalledFilename, previousVersion, previousFsrVersion, previousIsOptiPatcherInstalled);
+            return;
         }
+
+        ApplyInstallationState(game, isInstalled, installedFilename, newVersion, fsrVersion, isOptiPatcherInstalled);
     }
 
     public async Task UninstallOptiScaler(GameInstance game)
