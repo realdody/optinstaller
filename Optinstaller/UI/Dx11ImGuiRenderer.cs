@@ -64,6 +64,7 @@ float4 main(PS_INPUT input) : SV_Target
 }";
 
     private readonly nint _hwnd;
+    private nint _context;
     private readonly Dictionary<nint, ID3D11ShaderResourceView> _textures = new();
 
     private ID3D11Device? _device;
@@ -99,7 +100,8 @@ float4 main(PS_INPUT input) : SV_Target
 
         CreateDeviceResources();
 
-        ImGui.CreateContext();
+        _context = ImGui.CreateContext();
+        SetCurrentContext();
 
         var io = ImGui.GetIO();
         io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
@@ -120,7 +122,12 @@ float4 main(PS_INPUT input) : SV_Target
 
         _disposed = true;
 
-        ImGui.DestroyContext();
+        if (_context != 0)
+        {
+            SetCurrentContext();
+            ImGui.DestroyContext(_context);
+            _context = 0;
+        }
 
         var disposedTextures = new HashSet<ID3D11ShaderResourceView>();
         foreach (var texture in _textures.Values)
@@ -161,6 +168,8 @@ float4 main(PS_INPUT input) : SV_Target
 
     public void BeginFrame(float deltaTime, int width, int height)
     {
+        SetCurrentContext();
+
         var io = ImGui.GetIO();
         io.DisplaySize = new Vector2(Math.Max(1, width), Math.Max(1, height));
         io.DisplayFramebufferScale = Vector2.One;
@@ -169,8 +178,10 @@ float4 main(PS_INPUT input) : SV_Target
         ImGui.NewFrame();
     }
 
-    public void Render(Vector4 clearColor)
+    public void Render(Vector4 clearColor, bool enableVsync = true)
     {
+        SetCurrentContext();
+
         if (_deviceContext == null || _renderTargetView == null || _swapChain == null)
         {
             return;
@@ -182,11 +193,13 @@ float4 main(PS_INPUT input) : SV_Target
         _deviceContext.ClearRenderTargetView(_renderTargetView, new Color4(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W));
 
         RenderDrawData(ImGui.GetDrawData());
-        _swapChain.Present(1, PresentFlags.None);
+        _swapChain.Present(enableVsync ? 1u : 0u, PresentFlags.None);
     }
 
     public void Resize(int width, int height)
     {
+        SetCurrentContext();
+
         if (_swapChain == null || _deviceContext == null || width <= 0 || height <= 0)
         {
             return;
@@ -205,6 +218,8 @@ float4 main(PS_INPUT input) : SV_Target
 
     public bool HandleMessage(uint msg, nuint wParam, nint lParam)
     {
+        SetCurrentContext();
+
         var io = ImGui.GetIO();
 
         switch (msg)
@@ -282,6 +297,14 @@ float4 main(PS_INPUT input) : SV_Target
         return false;
     }
 
+    private void SetCurrentContext()
+    {
+        if (_context != 0)
+        {
+            ImGui.SetCurrentContext(_context);
+        }
+    }
+
     private void CreateDeviceResources()
     {
         var creationFlags = DeviceCreationFlags.BgraSupport;
@@ -318,7 +341,7 @@ float4 main(PS_INPUT input) : SV_Target
             false,
             Usage.RenderTargetOutput,
             2,
-            Scaling.Stretch,
+            Scaling.None,
             SwapEffect.FlipDiscard,
             AlphaMode.Ignore,
             SwapChainFlags.None);
