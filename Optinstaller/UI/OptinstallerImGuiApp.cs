@@ -20,7 +20,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private const int MinMainClientHeight = 720;
     private const int MinGameDetailsClientWidth = 840;
     private const int MinGameDetailsClientHeight = 760;
-    private const string ConfirmationPopupId = "##ConfirmationPrompt";
+    private const string ConfirmationPopupIdPrefix = "ConfirmationPrompt##";
     private const ImGuiWindowFlags PanelWindowFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
     private const ImGuiChildFlags PaddedPanelChildFlags = ImGuiChildFlags.Borders | ImGuiChildFlags.AlwaysUseWindowPadding;
 
@@ -2047,7 +2047,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             return;
         }
 
-        var popupId = $"{_confirmation.Title}{ConfirmationPopupId}";
+        var popupId = _confirmation.PopupId;
         if (_openConfirmationPopup)
         {
             ImGui.OpenPopup(popupId);
@@ -2448,6 +2448,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         try
         {
+            if (_installationWindow != null && !_installationWindow.IsClosed && !CanCloseInstallationWindow())
+            {
+                _installationWindow.Focus();
+                return;
+            }
+
             _installationDialog = new InstallationDialogState
             {
                 Game = game,
@@ -2541,7 +2547,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private void QueueConfirmation(ConfirmationHost host, string title, string message, string confirmLabel, Func<Task> confirmAction, string? successMessage)
     {
-        _confirmation = new ConfirmationDialogState(title, message, confirmLabel, confirmAction, successMessage);
+        _confirmation = new ConfirmationDialogState(
+            $"{ConfirmationPopupIdPrefix}{Guid.NewGuid():N}",
+            title,
+            message,
+            confirmLabel,
+            confirmAction,
+            successMessage);
         _confirmationHost = host;
         _confirmationPopupPosition = null;
         _confirmationPopupSize = new Vector2(460f, 0f);
@@ -3589,6 +3601,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private sealed record MetricCard(string Label, string Value, string Detail, Vector4 Accent);
 
     private sealed record ConfirmationDialogState(
+        string PopupId,
         string Title,
         string Message,
         string ConfirmLabel,
