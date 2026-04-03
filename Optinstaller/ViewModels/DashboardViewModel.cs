@@ -88,11 +88,11 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
     private void LoadGames()
     {
         Games.Clear();
-        foreach (var path in _configService.CurrentConfig.SavedGamePaths)
+        foreach (var savedGame in GetSavedGames())
         {
-            if (Directory.Exists(path))
+            if (Directory.Exists(savedGame.GamePath))
             {
-                AddGameInternal(path);
+                AddGameInternal(savedGame.GamePath, savedGame.ExecutablePath);
             }
         }
     }
@@ -159,10 +159,16 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
         var game = AddGameInternal(normalizedPath, executablePath);
 
-        if (!_configService.CurrentConfig.SavedGamePaths.Any(path =>
-                NormalizeGamePath(path).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
+        var savedGames = GetSavedGames();
+        if (!savedGames.Any(saved =>
+                NormalizeGamePath(saved.GamePath).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
         {
-            _configService.CurrentConfig.SavedGamePaths.Add(normalizedPath);
+            savedGames.Add(new SavedGameEntry
+            {
+                GamePath = normalizedPath,
+                ExecutablePath = NormalizeExecutablePath(executablePath, normalizedPath),
+            });
+            SaveSavedGames(savedGames);
             await _configService.SaveAsync();
         }
 
@@ -492,6 +498,65 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         ApplyInstallationState(game, isInstalled, filename, detectedVersion, fsrVersion, isOptiPatcherInstalled);
     }
 
+    public async Task UpdateGameExecutable(GameInstance game, string rawExecutablePath)
+    {
+        if (string.IsNullOrWhiteSpace(rawExecutablePath))
+        {
+            throw new InvalidOperationException("Select a valid .exe file.");
+        }
+
+        var executablePath = Path.GetFullPath(rawExecutablePath);
+        if (!File.Exists(executablePath) ||
+            !string.Equals(Path.GetExtension(executablePath), ".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Select a valid .exe file.");
+        }
+
+        var executableDirectory = Path.GetDirectoryName(executablePath);
+        if (string.IsNullOrWhiteSpace(executableDirectory) || !Directory.Exists(executableDirectory))
+        {
+            throw new InvalidOperationException("Could not determine the game folder from the selected executable.");
+        }
+
+        var normalizedPath = NormalizeGamePath(executableDirectory);
+        if (Games.Any(existing =>
+                !ReferenceEquals(existing, game) &&
+                existing.GamePath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException("That executable's folder is already in the library.");
+        }
+
+        var normalizedExecutablePath = NormalizeExecutablePath(executablePath, normalizedPath) ?? executablePath;
+        var previousPath = NormalizeGamePath(game.GamePath);
+
+        game.GamePath = normalizedPath;
+        game.ExecutableName = Path.GetFileName(normalizedExecutablePath);
+        game.Name = ResolveGameDisplayName(normalizedPath, normalizedExecutablePath);
+        RefreshGameInstallation(game);
+
+        var savedGames = GetSavedGames();
+        var savedIndex = savedGames.FindIndex(saved =>
+            NormalizeGamePath(saved.GamePath).Equals(previousPath, StringComparison.OrdinalIgnoreCase));
+
+        var updatedEntry = new SavedGameEntry
+        {
+            GamePath = normalizedPath,
+            ExecutablePath = normalizedExecutablePath,
+        };
+
+        if (savedIndex >= 0)
+        {
+            savedGames[savedIndex] = updatedEntry;
+        }
+        else
+        {
+            savedGames.Add(updatedEntry);
+        }
+
+        SaveSavedGames(savedGames);
+        await _configService.SaveAsync();
+    }
+
     public async Task UpdateOptiScaler(GameInstance game, OptiScalerVersion selectedVersion)
     {
         if (!game.IsInstalled)
@@ -571,42 +636,48 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         var path = NormalizeGamePath(game.GamePath);
         Games.Remove(game);
 
-        var savedPath = _configService.CurrentConfig.SavedGamePaths.FirstOrDefault(saved =>
-            NormalizeGamePath(saved).Equals(path, StringComparison.OrdinalIgnoreCase));
-
-        if (savedPath != null)
+        var savedGames = GetSavedGames();
+        if (savedGames.RemoveAll(saved =>
+                NormalizeGamePath(saved.GamePath).Equals(path, StringComparison.OrdinalIgnoreCase)) > 0)
         {
-            _configService.CurrentConfig.SavedGamePaths.Remove(savedPath);
+            SaveSavedGames(savedGames);
             await _configService.SaveAsync();
         }
     }
 
     private async Task NormalizeSavedGamePathsAsync()
     {
-        var normalizedPaths = new List<string>();
-        foreach (var savedPath in _configService.CurrentConfig.SavedGamePaths)
+        var normalizedGames = new List<SavedGameEntry>();
+        foreach (var savedGame in GetSavedGames())
         {
-            if (string.IsNullOrWhiteSpace(savedPath))
+            if (string.IsNullOrWhiteSpace(savedGame.GamePath))
             {
                 continue;
             }
 
-            var normalizedPath = NormalizeGamePath(savedPath);
-            if (normalizedPaths.Any(path => path.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
+            var normalizedPath = NormalizeGamePath(savedGame.GamePath);
+            if (normalizedGames.Any(existing => existing.GamePath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
             }
 
-            normalizedPaths.Add(normalizedPath);
+            normalizedGames.Add(new SavedGameEntry
+            {
+                GamePath = normalizedPath,
+                ExecutablePath = NormalizeExecutablePath(savedGame.ExecutablePath, normalizedPath),
+            });
         }
 
-        var currentPaths = _configService.CurrentConfig.SavedGamePaths;
-        var changed = currentPaths.Count != normalizedPaths.Count;
+        var currentGames = GetSavedGames();
+        var changed = currentGames.Count != normalizedGames.Count;
         if (!changed)
         {
-            for (var i = 0; i < currentPaths.Count; i++)
+            for (var i = 0; i < currentGames.Count; i++)
             {
-                if (!currentPaths[i].Equals(normalizedPaths[i], StringComparison.OrdinalIgnoreCase))
+                var currentGame = currentGames[i];
+                var normalizedGame = normalizedGames[i];
+                if (!currentGame.GamePath.Equals(normalizedGame.GamePath, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(currentGame.ExecutablePath, normalizedGame.ExecutablePath, StringComparison.OrdinalIgnoreCase))
                 {
                     changed = true;
                     break;
@@ -619,9 +690,75 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             return;
         }
 
-        currentPaths.Clear();
-        currentPaths.AddRange(normalizedPaths);
+        SaveSavedGames(normalizedGames);
         await _configService.SaveAsync();
+    }
+
+    private List<SavedGameEntry> GetSavedGames()
+    {
+        if (_configService.CurrentConfig.SavedGames.Count > 0)
+        {
+            return _configService.CurrentConfig.SavedGames
+                .Select(saved => new SavedGameEntry
+                {
+                    GamePath = saved.GamePath,
+                    ExecutablePath = saved.ExecutablePath,
+                })
+                .ToList();
+        }
+
+        return _configService.CurrentConfig.SavedGamePaths
+            .Select(path => new SavedGameEntry
+            {
+                GamePath = path,
+                ExecutablePath = null,
+            })
+            .ToList();
+    }
+
+    private void SaveSavedGames(IEnumerable<SavedGameEntry> savedGames)
+    {
+        var normalizedGames = savedGames
+            .Where(saved => !string.IsNullOrWhiteSpace(saved.GamePath))
+            .Select(saved => new SavedGameEntry
+            {
+                GamePath = saved.GamePath,
+                ExecutablePath = string.IsNullOrWhiteSpace(saved.ExecutablePath) ? null : saved.ExecutablePath,
+            })
+            .ToList();
+
+        _configService.CurrentConfig.SavedGames.Clear();
+        _configService.CurrentConfig.SavedGames.AddRange(normalizedGames);
+
+        _configService.CurrentConfig.SavedGamePaths.Clear();
+        _configService.CurrentConfig.SavedGamePaths.AddRange(normalizedGames.Select(saved => saved.GamePath));
+    }
+
+    private static string? NormalizeExecutablePath(string? executablePath, string normalizedGamePath)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
+        {
+            return null;
+        }
+
+        var fullExecutablePath = Path.GetFullPath(executablePath);
+        var executableDirectory = Path.GetDirectoryName(fullExecutablePath);
+        if (string.IsNullOrWhiteSpace(executableDirectory) ||
+            !NormalizeGamePath(executableDirectory).Equals(normalizedGamePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var executableName = Path.GetFileName(fullExecutablePath);
+        try
+        {
+            return Directory.EnumerateFiles(normalizedGamePath, executableName, SearchOption.TopDirectoryOnly).FirstOrDefault()
+                ?? Path.Combine(normalizedGamePath, executableName);
+        }
+        catch
+        {
+            return Path.Combine(normalizedGamePath, executableName);
+        }
     }
 
     private static string NormalizeGamePath(string path)

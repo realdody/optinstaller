@@ -5,6 +5,8 @@ namespace Optinstaller.Services;
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(AppConfig))]
+[JsonSerializable(typeof(SavedGameEntry))]
+[JsonSerializable(typeof(List<SavedGameEntry>))]
 internal partial class ConfigurationServiceJsonContext : JsonSerializerContext
 {
 }

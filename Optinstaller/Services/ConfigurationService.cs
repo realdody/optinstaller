@@ -50,5 +50,12 @@ public class ConfigurationService
 public class AppConfig
 {
     public List<string> SavedGamePaths { get; set; } = new();
+    public List<SavedGameEntry> SavedGames { get; set; } = new();
     public string? LastSelectedVersion { get; set; }
+}
+
+public class SavedGameEntry
+{
+    public string GamePath { get; set; } = string.Empty;
+    public string? ExecutablePath { get; set; }
 }

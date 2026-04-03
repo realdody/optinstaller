@@ -15,6 +15,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
 {
     private readonly OptiScalerService _optiScalerService;
     private readonly InstallationOptions _options;
+    private readonly Task _initializationTask;
 
     [ObservableProperty] private int _stepIndex = 0;
     [ObservableProperty] private string _title = "Welcome";
@@ -79,10 +80,10 @@ public partial class InstallationWizardViewModel : ViewModelBase
             VersionPath = _selectedVersion?.LocalPath ?? string.Empty
         };
 
-        InitializeAsync();
+        _initializationTask = InitializeAsync();
     }
 
-    private async void InitializeAsync()
+    private async Task InitializeAsync()
     {
         try
         {
@@ -107,6 +108,57 @@ public partial class InstallationWizardViewModel : ViewModelBase
         {
             System.Diagnostics.Debug.WriteLine($"Initialization failed: {ex}");
             IsCheckingEnvironment = false;
+        }
+    }
+
+    public async Task InstallWithDefaultsAsync()
+    {
+        if (IsInstalling)
+        {
+            return;
+        }
+
+        await _initializationTask;
+
+        if (SelectedVersion == null)
+        {
+            throw new InvalidOperationException("Download an OptiScaler version before installing.");
+        }
+
+        _options.VersionPath = SelectedVersion.LocalPath;
+        _options.TargetFilename = SelectedFilename;
+        _options.EnableSpoofing = EnableSpoofing;
+
+        if (IsNvidia)
+        {
+            OptiPatcherSupported = false;
+            UseOptiPatcher = false;
+            OptiPatcherStatus = "OptiPatcher is skipped for Nvidia GPUs by default.";
+        }
+        else
+        {
+            await RefreshOptiPatcherSupportAsync();
+        }
+
+        StepIndex = 5;
+        IsInstalling = true;
+        UpdateState();
+
+        try
+        {
+            await Install();
+        }
+        finally
+        {
+            IsInstalling = false;
+            UpdateState();
+        }
+
+        if (!InstallSuccess)
+        {
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(InstallStatus)
+                ? "OptiScaler installation did not complete."
+                : InstallStatus);
         }
     }
 
@@ -203,25 +255,11 @@ public partial class InstallationWizardViewModel : ViewModelBase
                  // Skip OptiPatcher on Nvidia
                  StepIndex++;
                  StepIndex++;
-                 UpdateState();
-                 return;
-            }
+                  UpdateState();
+                  return;
+             }
 
-            CheckingOptiPatcher = true;
-            OptiPatcherStatus = "Checking GitHub for compatibility...";
-            var supported = await _optiScalerService.CheckOptiPatcherSupportAsync(_options.GamePath);
-            OptiPatcherSupported = supported;
-            CheckingOptiPatcher = false;
-            if (supported)
-            {
-                OptiPatcherStatus = "OptiPatcher support detected! Highly recommended for this game.";
-                UseOptiPatcher = true;
-            }
-            else
-            {
-                OptiPatcherStatus = "No known OptiPatcher support detected for this game.";
-                UseOptiPatcher = false;
-            }
+            await RefreshOptiPatcherSupportAsync();
         }
         
         if (StepIndex == 5)
@@ -312,6 +350,32 @@ public partial class InstallationWizardViewModel : ViewModelBase
                 CanGoBack = false;
                 CanGoNext = false;
                 break;
+        }
+    }
+
+    private async Task RefreshOptiPatcherSupportAsync()
+    {
+        CheckingOptiPatcher = true;
+        OptiPatcherStatus = "Checking GitHub for compatibility...";
+
+        try
+        {
+            var supported = await _optiScalerService.CheckOptiPatcherSupportAsync(_options.GamePath);
+            OptiPatcherSupported = supported;
+            if (supported)
+            {
+                OptiPatcherStatus = "OptiPatcher support detected! Highly recommended for this game.";
+                UseOptiPatcher = true;
+            }
+            else
+            {
+                OptiPatcherStatus = "No known OptiPatcher support detected for this game.";
+                UseOptiPatcher = false;
+            }
+        }
+        finally
+        {
+            CheckingOptiPatcher = false;
         }
     }
 

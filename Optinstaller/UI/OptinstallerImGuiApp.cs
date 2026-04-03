@@ -919,7 +919,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var installedCount = CountInstalledGames();
         var pendingCount = allGames.Count - installedCount;
 
-        RenderPageHeader("Dashboard", "Click a game to open details and manage OptiScaler.");
+        RenderPageHeader("Dashboard", "Manage installs directly or open per-game details.");
         RenderDashboardToolbar(dashboard, allGames.Count, installedCount, pendingCount);
 
         ImGui.Spacing();
@@ -965,35 +965,70 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16f, 14f));
         ImGui.BeginChild("DashboardList", new Vector2(0f, 0f), PaddedPanelChildFlags, PanelWindowFlags);
         RenderSectionHeader($"Games ({filteredGames.Count})");
-        TextMuted("Click any tracked game to open its details and actions in a separate window.");
+        TextMuted("Use Install or Uninstall for quick actions, or open Details for the full per-game view.");
         ImGui.Spacing();
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8f, 6f));
+        var canQuickInstall = dashboard.DownloadedVersions.Count > 0;
         foreach (var game in filteredGames)
         {
             var isSelected = selectedGame != null && selectedGame.GamePath.Equals(game.GamePath, StringComparison.OrdinalIgnoreCase);
-            var clicked = game.IsInstalled
+            var action = game.IsInstalled
                 ? DrawInstalledGameRow(game, isSelected)
-                : DrawSelectableRow(
-                    $"Game::{game.GamePath}",
-                    game.Name,
-                    "Not installed",
-                    isSelected,
-                    InfoColor,
-                    "Ready",
-                    centerText: false);
+                : DrawPendingGameRow(game, isSelected, canQuickInstall);
 
-            if (clicked)
+            if (action == DashboardGameRowAction.None)
             {
-                _selectedGamePath = game.GamePath;
-                dashboard.SelectedGame = game;
-                selectedGame = game;
-                OpenGameDetailsDialog(game);
+                continue;
+            }
+
+            SelectDashboardGame(dashboard, game);
+            selectedGame = game;
+
+            switch (action)
+            {
+                case DashboardGameRowAction.Select:
+                    break;
+                case DashboardGameRowAction.Details:
+                    OpenGameDetailsDialog(game);
+                    break;
+                case DashboardGameRowAction.Install:
+                    StartUiTask(async () =>
+                    {
+                        var wizard = dashboard.CreateInstallationWizard(game);
+                        wizard.SelectedFilename = dashboard.TargetFilename;
+                        wizard.EnableSpoofing = dashboard.EnableSpoofing;
+
+                        try
+                        {
+                            await wizard.InstallWithDefaultsAsync();
+                        }
+                        finally
+                        {
+                            dashboard.RefreshGameInstallation(game);
+                        }
+                    }, "Could not install OptiScaler", $"Installed OptiScaler for {game.Name}.");
+                    break;
+                case DashboardGameRowAction.Uninstall:
+                    QueueConfirmation(
+                        ConfirmationHost.MainWindow,
+                        $"Uninstall from {game.Name}",
+                        "This removes OptiScaler files from the selected game but keeps the game in your library.",
+                        "Uninstall",
+                        () => dashboard.UninstallOptiScaler(game),
+                        $"Uninstalled OptiScaler from {game.Name}.");
+                    break;
             }
 
         }
         ImGui.PopStyleVar();
         ImGui.EndChild();
         ImGui.PopStyleVar();
+    }
+
+    private void SelectDashboardGame(DashboardViewModel dashboard, GameInstance game)
+    {
+        _selectedGamePath = game.GamePath;
+        dashboard.SelectedGame = game;
     }
 
     private void RenderGameDetails(DashboardViewModel dashboard, GameInstance? game)
@@ -1010,26 +1045,42 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.TextUnformatted(game.Name);
         ImGui.SameLine();
         ImGui.TextColored(game.IsInstalled ? SuccessColor : InfoColor, game.IsInstalled ? "Installed" : "Not installed");
-        TextMuted(game.GamePath);
-        ImGui.Spacing();
-        RenderSectionHeader("Install Defaults");
-        if (dashboard.DownloadedVersions.Count > 0)
-        {
-            var preferredVersion = dashboard.SelectedVersion;
-            DrawVersionCombo("Preferred version", dashboard.DownloadedVersions, ref preferredVersion);
-            dashboard.SelectedVersion = preferredVersion;
-        }
-        else
-        {
-            RenderCallout(
-                "No downloaded versions available",
-                "Download at least one OptiScaler build from the Versions page before starting an install.",
-                WarningColor);
-        }
 
         ImGui.Spacing();
         RenderSectionHeader("Details");
-        RenderKeyValue("Game Path", game.GamePath);
+        var changePathWidth = GetButtonWidth("Change Game Path", 170f);
+        var openFolderWidth = GetButtonWidth("Open Folder", 140f);
+
+        if (ImGui.BeginTable("GamePathActions", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings))
+        {
+            ImGui.TableSetupColumn("Path", ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, changePathWidth + openFolderWidth + ImGui.GetStyle().ItemSpacing.X);
+
+            ImGui.TableNextColumn();
+            ImGui.TextDisabled("Game Path");
+            ImGui.TextWrapped(game.GamePath);
+
+            ImGui.TableNextColumn();
+            var actionsWidth = changePathWidth + openFolderWidth + ImGui.GetStyle().ItemSpacing.X;
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + MathF.Max(0f, ImGui.GetContentRegionAvail().X - actionsWidth));
+
+            if (ImGui.Button("Change Game Path", new Vector2(changePathWidth, 0f)))
+            {
+                PromptChangeGamePath(dashboard, game);
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Open Folder", new Vector2(openFolderWidth, 0f)))
+            {
+                dashboard.OpenGameFolder(game);
+            }
+
+            ImGui.EndTable();
+        }
+
+        TextMuted("Pick the exact executable to track for this game. This bypasses the add-game auto-detection logic.");
+        ImGui.Spacing();
+
         if (!string.IsNullOrWhiteSpace(game.ExecutableName))
         {
             RenderKeyValue("Executable", game.ExecutableName);
@@ -1051,21 +1102,14 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         ImGui.Spacing();
         RenderSectionHeader("Actions");
-        var openFolderWidth = GetButtonWidth("Open Folder", 140f);
         var installWidth = GetButtonWidth("Install OptiScaler", 160f);
         var configureWidth = GetButtonWidth("Configure", 120f);
         var updateWidth = GetButtonWidth("Update Version", 150f);
         var uninstallWidth = GetButtonWidth("Uninstall", 120f);
         var removeWidth = GetButtonWidth("Remove From Library", 180f);
 
-        if (ImGui.Button("Open Folder", new Vector2(openFolderWidth, 0f)))
-        {
-            dashboard.OpenGameFolder(game);
-        }
-
         if (!game.IsInstalled)
         {
-            ContinueOnSameLineIfFits(installWidth);
             ImGui.BeginDisabled(dashboard.DownloadedVersions.Count == 0);
             var openInstallDialog = ImGui.Button("Install OptiScaler", new Vector2(installWidth, 0f));
             ImGui.EndDisabled();
@@ -1923,6 +1967,29 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }, "Could not add the selected game");
     }
 
+    private void PromptChangeGamePath(DashboardViewModel dashboard, GameInstance game)
+    {
+        var selectedPath = NativeDialogs.PickFile(
+            "Select Game Executable",
+            "Executable Files (*.exe)|*.exe|All Files (*.*)|*.*",
+            _gameDetailsWindow?.WindowHandle ?? _hwnd);
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
+
+        StartUiTask(async () =>
+        {
+            await dashboard.UpdateGameExecutable(game, selectedPath);
+            _selectedGamePath = game.GamePath;
+
+            if (_gameDetailsWindow != null && !_gameDetailsWindow.IsClosed)
+            {
+                _gameDetailsWindow.SetTitle($"Game Details - {game.Name}");
+            }
+        }, "Could not update game path", $"Updated the tracked path for {game.Name}.");
+    }
+
     private float AnimateValue(string key, float target, float speed = 12f)
     {
         var current = _animationValues.GetValueOrDefault(key);
@@ -2763,32 +2830,40 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.PopStyleColor(2);
     }
 
-    private bool DrawInstalledGameRow(GameInstance game, bool selected)
+    private DashboardGameRowAction DrawInstalledGameRow(GameInstance game, bool selected)
     {
+        var uninstallWidth = GetButtonWidth("Uninstall", 110f);
+        var detailsWidth = GetButtonWidth("Details", 110f);
+        var actionSpacing = 8f;
+        var actionsWidth = uninstallWidth + actionSpacing + detailsWidth;
+
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
         var min = ImGui.GetCursorScreenPos();
+        var availableWidth = MathF.Max(0f, ImGui.GetContentRegionAvail().X - 6f);
         var lineHeight = ImGui.GetTextLineHeight();
-        var badge = "Installed";
-        var detail = string.IsNullOrWhiteSpace(game.InstalledFilename)
-            ? "Installed"
-            : $"Target DLL: {game.InstalledFilename}";
-        var badgeSize = ImGui.CalcTextSize(badge);
-        var availableWidth = Math.Max(0f, ImGui.GetContentRegionAvail().X - 6f);
-        var pillsWidth = Math.Max(1f, availableWidth - badgeSize.X - 40f);
+        var buttonHeight = ImGui.GetFrameHeight();
+        var contentLeft = min.X + 16f;
+        var contentRight = min.X + MathF.Max(1f, availableWidth - actionsWidth - 32f);
+        var pillsWidth = MathF.Max(1f, contentRight - contentLeft);
         var pillsHeight = MeasureInstalledGamePillsHeight(game, pillsWidth);
         var contentHeight = (lineHeight * 2f) + 11f + pillsHeight;
-        var rowHeight = MathF.Max(88f, contentHeight + 16f);
+        var rowHeight = MathF.Max(88f, MathF.Max(contentHeight + 16f, buttonHeight + 20f));
         var size = new Vector2(availableWidth, rowHeight);
 
         if (size.X < 1f || size.Y < 1f)
         {
             ImGui.Dummy(new Vector2(1f, MathF.Max(1f, rowHeight)));
-            return false;
+            return DashboardGameRowAction.None;
         }
 
-        ImGui.InvisibleButton($"Game::{game.GamePath}", size);
+        ImGui.Dummy(size);
+        var rowEndCursorPos = ImGui.GetCursorPos();
+
+        var selectWidth = MathF.Max(1f, availableWidth - actionsWidth - 24f);
+        ImGui.SetCursorScreenPos(min);
+        ImGui.InvisibleButton($"GameSelect::{game.GamePath}", new Vector2(selectWidth, rowHeight));
         var hovered = ImGui.IsItemHovered();
-        var clicked = ImGui.IsItemClicked();
+        var selectClicked = ImGui.IsItemClicked();
 
         var emphasis = AnimateValue($"Row::Game::{game.GamePath}", selected ? 1f : hovered ? 0.5f : 0f);
         var max = min + size;
@@ -2798,8 +2873,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var border = Vector4.Lerp(new Vector4(PanelBorderColor.X, PanelBorderColor.Y, PanelBorderColor.Z, 0.50f), new Vector4(accent.X, accent.Y, accent.Z, 0.82f), emphasis);
         var textColor = ImGui.ColorConvertFloat4ToU32(PrimaryTextColor);
         var detailColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(MutedTextColor, accent, 0.35f));
-        var badgeColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(new Vector4(accent.X, accent.Y, accent.Z, 0.75f), accent, emphasis));
-        var titleSize = ImGui.CalcTextSize(game.Name);
+        var detail = string.IsNullOrWhiteSpace(game.InstalledFilename)
+            ? "Installed"
+            : $"Installed - Target DLL: {game.InstalledFilename}";
 
         drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 2f);
         drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 2f, ImDrawFlags.None, 1f);
@@ -2813,21 +2889,116 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 2f);
         }
 
-        var contentLeft = min.X + 16f;
-        var contentRight = max.X - badgeSize.X - 24f;
         var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
         var detailY = textStartY + lineHeight + 3f;
         var pillsOrigin = new Vector2(contentLeft, detailY + lineHeight + 8f);
 
         drawList.AddText(new Vector2(contentLeft, textStartY), textColor, game.Name);
         drawList.AddText(new Vector2(contentLeft, detailY), detailColor, detail);
-        DrawInstalledGamePills(drawList, pillsOrigin, Math.Max(1f, contentRight - contentLeft), game);
+        DrawInstalledGamePills(drawList, pillsOrigin, pillsWidth, game);
 
-        var badgeX = max.X - badgeSize.X - 14f;
-        var badgeY = min.Y + MathF.Max(8f, (rowHeight - badgeSize.Y) * 0.5f);
-        drawList.AddText(new Vector2(badgeX, badgeY), badgeColor, badge);
+        var buttonY = min.Y + MathF.Max(8f, (rowHeight - buttonHeight) * 0.5f);
+        var uninstallX = max.X - actionsWidth - 16f;
+        DashboardGameRowAction action = selectClicked ? DashboardGameRowAction.Select : DashboardGameRowAction.None;
 
-        return clicked;
+        ImGui.PushID(game.GamePath);
+        ImGui.SetCursorScreenPos(new Vector2(uninstallX, buttonY));
+        if (ImGui.Button("Uninstall", new Vector2(uninstallWidth, 0f)))
+        {
+            action = DashboardGameRowAction.Uninstall;
+        }
+
+        ImGui.SetCursorScreenPos(new Vector2(uninstallX + uninstallWidth + actionSpacing, buttonY));
+        if (ImGui.Button("Details", new Vector2(detailsWidth, 0f)))
+        {
+            action = DashboardGameRowAction.Details;
+        }
+        ImGui.PopID();
+
+        ImGui.SetCursorPos(rowEndCursorPos);
+        ImGui.Dummy(Vector2.Zero);
+        return action;
+    }
+
+    private DashboardGameRowAction DrawPendingGameRow(GameInstance game, bool selected, bool canInstall)
+    {
+        var installWidth = GetButtonWidth("Install", 110f);
+        var detailsWidth = GetButtonWidth("Details", 110f);
+        var actionSpacing = 8f;
+        var actionsWidth = installWidth + actionSpacing + detailsWidth;
+
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
+        var min = ImGui.GetCursorScreenPos();
+        var lineHeight = ImGui.GetTextLineHeight();
+        var buttonHeight = ImGui.GetFrameHeight();
+        var rowHeight = MathF.Max(56f, MathF.Max((lineHeight * 2f) + 20f, buttonHeight + 20f));
+        var size = new Vector2(MathF.Max(0f, ImGui.GetContentRegionAvail().X - 6f), rowHeight);
+
+        if (size.X < 1f || size.Y < 1f)
+        {
+            ImGui.Dummy(new Vector2(1f, MathF.Max(1f, rowHeight)));
+            return DashboardGameRowAction.None;
+        }
+
+        ImGui.Dummy(size);
+        var rowEndCursorPos = ImGui.GetCursorPos();
+
+        var selectWidth = MathF.Max(1f, size.X - actionsWidth - 24f);
+        ImGui.SetCursorScreenPos(min);
+        ImGui.InvisibleButton($"GameSelect::{game.GamePath}", new Vector2(selectWidth, rowHeight));
+        var hovered = ImGui.IsItemHovered();
+        var selectClicked = ImGui.IsItemClicked();
+
+        var emphasis = AnimateValue($"Row::PendingGame::{game.GamePath}", selected ? 1f : hovered ? 0.5f : 0f);
+        var max = min + size;
+        var drawList = ImGui.GetWindowDrawList();
+        var accent = InfoColor;
+        var background = Vector4.Lerp(new Vector4(0.22f, 0.23f, 0.22f, 0.55f), new Vector4(0.29f, 0.35f, 0.22f, 0.97f), emphasis);
+        var border = Vector4.Lerp(new Vector4(PanelBorderColor.X, PanelBorderColor.Y, PanelBorderColor.Z, 0.50f), new Vector4(accent.X, accent.Y, accent.Z, 0.82f), emphasis);
+        var textColor = ImGui.ColorConvertFloat4ToU32(PrimaryTextColor);
+        var detailColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(MutedTextColor, accent, 0.35f));
+
+        drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 2f);
+        drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 2f, ImDrawFlags.None, 1f);
+
+        if (emphasis > 0.02f)
+        {
+            drawList.AddLine(
+                new Vector2(min.X + 8f, min.Y + 8f),
+                new Vector2(min.X + 8f, max.Y - 8f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.85f * emphasis)),
+                2f);
+        }
+
+        var contentHeight = (lineHeight * 2f) + 3f;
+        var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
+        var contentLeft = min.X + 16f;
+        drawList.AddText(new Vector2(contentLeft, textStartY), textColor, game.Name);
+        drawList.AddText(new Vector2(contentLeft, textStartY + lineHeight + 3f), detailColor, "Not installed");
+
+        var buttonY = min.Y + MathF.Max(8f, (rowHeight - buttonHeight) * 0.5f);
+        var installX = max.X - actionsWidth - 16f;
+        DashboardGameRowAction action = selectClicked ? DashboardGameRowAction.Select : DashboardGameRowAction.None;
+
+        ImGui.PushID(game.GamePath);
+        ImGui.SetCursorScreenPos(new Vector2(installX, buttonY));
+        ImGui.BeginDisabled(!canInstall);
+        if (ImGui.Button("Install", new Vector2(installWidth, 0f)))
+        {
+            action = DashboardGameRowAction.Install;
+        }
+        ImGui.EndDisabled();
+
+        ImGui.SetCursorScreenPos(new Vector2(installX + installWidth + actionSpacing, buttonY));
+        if (ImGui.Button("Details", new Vector2(detailsWidth, 0f)))
+        {
+            action = DashboardGameRowAction.Details;
+        }
+        ImGui.PopID();
+
+        ImGui.SetCursorPos(rowEndCursorPos);
+        ImGui.Dummy(Vector2.Zero);
+        return action;
     }
 
     private static float MeasureInstalledGamePillsHeight(GameInstance game, float maxWidth)
@@ -3290,6 +3461,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         public bool IsInSizeMove => _isInSizeMove;
 
+        public nint WindowHandle => _hwnd;
+
         public void SetMinClientSize(int width, int height)
         {
             _minClientWidth = Math.Max(1, width);
@@ -3604,6 +3777,15 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         MainWindow,
         GameDetailsWindow,
+    }
+
+    private enum DashboardGameRowAction
+    {
+        None,
+        Select,
+        Details,
+        Install,
+        Uninstall,
     }
 
     private sealed class UpdateDialogState
