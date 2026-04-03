@@ -1,6 +1,12 @@
 # OptiManager
 An unofficial GUI installer for OptiScaler and its utilities.
 
+Early screenshots, will probably need updating later:
+
+<img width="1442" height="932" alt="image" src="https://github.com/user-attachments/assets/2d5350db-26b4-4c7c-ab76-822499acbbff" />
+
+<img width="1442" height="932" alt="image" src="https://github.com/user-attachments/assets/327571a3-c289-4239-bc5b-4be3e40699da" />
+
 
                                                                                                   
                                                                                                     
