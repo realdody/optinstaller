@@ -26,5 +26,14 @@ public partial class GameInstance : ObservableObject
     private string _fsrVersion = string.Empty;
 
     [ObservableProperty]
+    private string _antiCheatProvider = string.Empty;
+
+    [ObservableProperty]
+    private string _scanSource = string.Empty;
+
+    [ObservableProperty]
+    private string _scanSourceId = string.Empty;
+
+    [ObservableProperty]
     private bool _isOptiPatcherInstalled;
 }

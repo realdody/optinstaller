@@ -15,3 +15,8 @@ internal partial class ConfigurationServiceJsonContext : JsonSerializerContext
 internal partial class VersionServiceJsonContext : JsonSerializerContext
 {
 }
+
+[JsonSerializable(typeof(List<AntiCheatCatalogEntry>))]
+internal partial class AntiCheatDetectionJsonContext : JsonSerializerContext
+{
+}

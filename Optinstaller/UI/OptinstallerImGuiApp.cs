@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.Management;
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -22,6 +24,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private const int MinGameDetailsClientHeight = 760;
     private const string ConfirmationPopupIdPrefix = "ConfirmationPrompt##";
     private const ImGuiWindowFlags PanelWindowFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+    private const ImGuiWindowFlags ScrollablePanelWindowFlags = ImGuiWindowFlags.None;
     private const ImGuiChildFlags PaddedPanelChildFlags = ImGuiChildFlags.Borders | ImGuiChildFlags.AlwaysUseWindowPadding;
 
     private static readonly Vector4 InfoColor = new(0.45f, 0.69f, 0.34f, 1f);
@@ -34,6 +37,133 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private static readonly Vector4 PanelRaisedBackgroundColor = new(0.24f, 0.25f, 0.26f, 1f);
     private static readonly Vector4 PanelBorderColor = new(0.34f, 0.39f, 0.31f, 1f);
     private static readonly Vector4 PrimaryTextColor = new(0.94f, 0.95f, 0.92f, 1f);
+    private static readonly ConfigChoice[] BooleanChoices =
+    {
+        new("false", "Disabled"),
+        new("true", "Enabled"),
+    };
+    private static readonly ConfigChoice[] FrameGenerationInputChoices =
+    {
+        new("nofg", "Disabled"),
+        new("dlssg", "DLSSG via Streamline"),
+        new("nukems", "Nukem's DLSSG"),
+        new("fsrfg", "FSR FG"),
+        new("upscaler", "OptiFG (Upscaler)"),
+        new("fsrfg30", "FSR FG 3.0"),
+    };
+    private static readonly ConfigChoice[] FrameGenerationOutputChoices =
+    {
+        new("nofg", "Disabled"),
+        new("fsrfg", "FSR FG 3/4"),
+        new("xefg", "XeFG"),
+        new("nukems", "Nukem's FSR FG"),
+    };
+    private static readonly ConfigChoice[] LogLevelChoices =
+    {
+        new("0", "Trace"),
+        new("1", "Debug"),
+        new("2", "Info"),
+        new("3", "Warning"),
+        new("4", "Error"),
+    };
+    private static readonly ShortcutCaptureKey[] ShortcutCaptureKeys =
+    {
+        new(ImGuiKey.Tab, Win32Native.VK_TAB),
+        new(ImGuiKey.LeftArrow, Win32Native.VK_LEFT),
+        new(ImGuiKey.RightArrow, Win32Native.VK_RIGHT),
+        new(ImGuiKey.UpArrow, Win32Native.VK_UP),
+        new(ImGuiKey.DownArrow, Win32Native.VK_DOWN),
+        new(ImGuiKey.PageUp, Win32Native.VK_PRIOR),
+        new(ImGuiKey.PageDown, Win32Native.VK_NEXT),
+        new(ImGuiKey.Home, Win32Native.VK_HOME),
+        new(ImGuiKey.End, Win32Native.VK_END),
+        new(ImGuiKey.Insert, Win32Native.VK_INSERT),
+        new(ImGuiKey.Delete, Win32Native.VK_DELETE),
+        new(ImGuiKey.Backspace, Win32Native.VK_BACK),
+        new(ImGuiKey.Space, Win32Native.VK_SPACE),
+        new(ImGuiKey.Enter, Win32Native.VK_RETURN),
+        new(ImGuiKey.Apostrophe, Win32Native.VK_OEM_7),
+        new(ImGuiKey.Comma, Win32Native.VK_OEM_COMMA),
+        new(ImGuiKey.Minus, Win32Native.VK_OEM_MINUS),
+        new(ImGuiKey.Period, Win32Native.VK_OEM_PERIOD),
+        new(ImGuiKey.Slash, Win32Native.VK_OEM_2),
+        new(ImGuiKey.Semicolon, Win32Native.VK_OEM_1),
+        new(ImGuiKey.Equal, Win32Native.VK_OEM_PLUS),
+        new(ImGuiKey.LeftBracket, Win32Native.VK_OEM_4),
+        new(ImGuiKey.Backslash, Win32Native.VK_OEM_5),
+        new(ImGuiKey.RightBracket, Win32Native.VK_OEM_6),
+        new(ImGuiKey.GraveAccent, Win32Native.VK_OEM_3),
+        new(ImGuiKey.CapsLock, Win32Native.VK_CAPITAL),
+        new(ImGuiKey.ScrollLock, Win32Native.VK_SCROLL),
+        new(ImGuiKey.NumLock, Win32Native.VK_NUMLOCK),
+        new(ImGuiKey.PrintScreen, Win32Native.VK_SNAPSHOT),
+        new(ImGuiKey.Pause, Win32Native.VK_PAUSE),
+        new(ImGuiKey.Keypad0, Win32Native.VK_NUMPAD0),
+        new(ImGuiKey.Keypad1, Win32Native.VK_NUMPAD1),
+        new(ImGuiKey.Keypad2, Win32Native.VK_NUMPAD2),
+        new(ImGuiKey.Keypad3, Win32Native.VK_NUMPAD3),
+        new(ImGuiKey.Keypad4, Win32Native.VK_NUMPAD4),
+        new(ImGuiKey.Keypad5, Win32Native.VK_NUMPAD5),
+        new(ImGuiKey.Keypad6, Win32Native.VK_NUMPAD6),
+        new(ImGuiKey.Keypad7, Win32Native.VK_NUMPAD7),
+        new(ImGuiKey.Keypad8, Win32Native.VK_NUMPAD8),
+        new(ImGuiKey.Keypad9, Win32Native.VK_NUMPAD9),
+        new(ImGuiKey.KeypadDecimal, Win32Native.VK_DECIMAL),
+        new(ImGuiKey.KeypadDivide, Win32Native.VK_DIVIDE),
+        new(ImGuiKey.KeypadMultiply, Win32Native.VK_MULTIPLY),
+        new(ImGuiKey.KeypadSubtract, Win32Native.VK_SUBTRACT),
+        new(ImGuiKey.KeypadAdd, Win32Native.VK_ADD),
+        new(ImGuiKey.Menu, Win32Native.VK_APPS),
+        new(ImGuiKey.F1, Win32Native.VK_F1),
+        new(ImGuiKey.F2, Win32Native.VK_F2),
+        new(ImGuiKey.F3, Win32Native.VK_F3),
+        new(ImGuiKey.F4, Win32Native.VK_F4),
+        new(ImGuiKey.F5, Win32Native.VK_F5),
+        new(ImGuiKey.F6, Win32Native.VK_F6),
+        new(ImGuiKey.F7, Win32Native.VK_F7),
+        new(ImGuiKey.F8, Win32Native.VK_F8),
+        new(ImGuiKey.F9, Win32Native.VK_F9),
+        new(ImGuiKey.F10, Win32Native.VK_F10),
+        new(ImGuiKey.F11, Win32Native.VK_F11),
+        new(ImGuiKey.F12, Win32Native.VK_F12),
+        new(ImGuiKey._0, '0'),
+        new(ImGuiKey._1, '1'),
+        new(ImGuiKey._2, '2'),
+        new(ImGuiKey._3, '3'),
+        new(ImGuiKey._4, '4'),
+        new(ImGuiKey._5, '5'),
+        new(ImGuiKey._6, '6'),
+        new(ImGuiKey._7, '7'),
+        new(ImGuiKey._8, '8'),
+        new(ImGuiKey._9, '9'),
+        new(ImGuiKey.A, 'A'),
+        new(ImGuiKey.B, 'B'),
+        new(ImGuiKey.C, 'C'),
+        new(ImGuiKey.D, 'D'),
+        new(ImGuiKey.E, 'E'),
+        new(ImGuiKey.F, 'F'),
+        new(ImGuiKey.G, 'G'),
+        new(ImGuiKey.H, 'H'),
+        new(ImGuiKey.I, 'I'),
+        new(ImGuiKey.J, 'J'),
+        new(ImGuiKey.K, 'K'),
+        new(ImGuiKey.L, 'L'),
+        new(ImGuiKey.M, 'M'),
+        new(ImGuiKey.N, 'N'),
+        new(ImGuiKey.O, 'O'),
+        new(ImGuiKey.P, 'P'),
+        new(ImGuiKey.Q, 'Q'),
+        new(ImGuiKey.R, 'R'),
+        new(ImGuiKey.S, 'S'),
+        new(ImGuiKey.T, 'T'),
+        new(ImGuiKey.U, 'U'),
+        new(ImGuiKey.V, 'V'),
+        new(ImGuiKey.W, 'W'),
+        new(ImGuiKey.X, 'X'),
+        new(ImGuiKey.Y, 'Y'),
+        new(ImGuiKey.Z, 'Z'),
+    };
+    private static string? _defaultDxgiConfigValue;
     private static readonly Win32Native.WndProcDelegate WindowProcedureDelegate = WindowProcedure;
     private static readonly string AppIconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "logo.ico");
     private static readonly object AppIconSync = new();
@@ -76,6 +206,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private Vector2 _confirmationPopupSize = new(460f, 0f);
     private Vector2 _confirmationPopupDragOffset;
     private UpdateDialogState? _updateDialog;
+    private ComponentDllDialogState? _componentDllDialog;
     private ConfigDialogState? _configDialog;
     private InstallationDialogState? _installationDialog;
     private GameDetailsDialogState? _gameDetailsDialog;
@@ -83,6 +214,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private bool _isDraggingConfirmationPopup;
     private bool _openConfirmationPopup;
     private NativeWindowHost? _updateWindow;
+    private NativeWindowHost? _componentDllWindow;
     private NativeWindowHost? _configWindow;
     private NativeWindowHost? _installationWindow;
     private NativeWindowHost? _gameDetailsWindow;
@@ -151,6 +283,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
             renderedAnyWindow |= RenderNativeWindow(_gameDetailsWindow, delta);
             renderedAnyWindow |= RenderNativeWindow(_updateWindow, delta);
+            renderedAnyWindow |= RenderNativeWindow(_componentDllWindow, delta);
             renderedAnyWindow |= RenderNativeWindow(_configWindow, delta);
             renderedAnyWindow |= RenderNativeWindow(_installationWindow, delta);
 
@@ -552,6 +685,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             }
         });
         CleanupClosedNativeWindow(ref _updateWindow, () => _updateDialog = null);
+        CleanupClosedNativeWindow(ref _componentDllWindow, () => _componentDllDialog = null);
         CleanupClosedNativeWindow(ref _configWindow, () => _configDialog = null);
         CleanupClosedNativeWindow(ref _installationWindow, () => FinalizeInstallationDialog(showSuccessMessage: false));
     }
@@ -560,6 +694,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         DisposeNativeWindow(ref _gameDetailsWindow);
         DisposeNativeWindow(ref _updateWindow);
+        DisposeNativeWindow(ref _componentDllWindow);
         DisposeNativeWindow(ref _configWindow);
         DisposeNativeWindow(ref _installationWindow);
     }
@@ -963,7 +1098,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16f, 14f));
-        ImGui.BeginChild("DashboardList", new Vector2(0f, 0f), PaddedPanelChildFlags, PanelWindowFlags);
+        ImGui.BeginChild("DashboardList", new Vector2(0f, 0f), PaddedPanelChildFlags, ScrollablePanelWindowFlags);
         RenderSectionHeader($"Games ({filteredGames.Count})");
         TextMuted("Use Install or Uninstall for quick actions, or open Details for the full per-game view.");
         ImGui.Spacing();
@@ -1017,6 +1152,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
                         () => dashboard.UninstallOptiScaler(game),
                         $"Uninstalled OptiScaler from {game.Name}.");
                     break;
+                case DashboardGameRowAction.UpdateVersion:
+                    OpenUpdateDialog(game);
+                    break;
+                case DashboardGameRowAction.OpenComponentDlls:
+                    OpenComponentDllDialog(game);
+                    break;
             }
 
         }
@@ -1031,8 +1172,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
         dashboard.SelectedGame = game;
     }
 
-    private void RenderGameDetails(DashboardViewModel dashboard, GameInstance? game)
+    private void RenderGameDetails(DashboardViewModel dashboard, GameDetailsDialogState? details)
     {
+        var game = details?.Game;
         if (game == null)
         {
             RenderCallout(
@@ -1045,6 +1187,29 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.TextUnformatted(game.Name);
         ImGui.SameLine();
         ImGui.TextColored(game.IsInstalled ? SuccessColor : InfoColor, game.IsInstalled ? "Installed" : "Not installed");
+
+        ImGui.Spacing();
+        RenderInlinePill(game.IsInstalled ? "Installed" : "Not installed", game.IsInstalled ? SuccessColor : InfoColor);
+        if (game.IsInstalled)
+        {
+            ImGui.SameLine();
+            if (RenderClickableInlinePill($"GameDetails::Version::{game.GamePath}", GetOptiScalerQuickPillText(game), SuccessColor))
+            {
+                OpenUpdateDialog(game);
+            }
+
+            ImGui.SameLine();
+            if (RenderClickableInlinePill($"GameDetails::Components::{game.GamePath}", GetUpscalersFgQuickPillText(), InfoColor))
+            {
+                OpenComponentDllDialog(game);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(game.AntiCheatProvider))
+        {
+            ImGui.SameLine();
+            RenderInlinePill(game.AntiCheatProvider, WarningColor);
+        }
 
         ImGui.Spacing();
         RenderSectionHeader("Details");
@@ -1086,7 +1251,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             RenderKeyValue("Executable", game.ExecutableName);
         }
 
-        if (ImGui.BeginTable("GameDetailSummary", 3, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
+        if (ImGui.BeginTable("GameDetailSummary", 4, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
         {
             ImGui.TableNextColumn();
             RenderCompactKeyValue("Current Version", game.CurrentVersion);
@@ -1097,14 +1262,33 @@ public sealed class OptinstallerImGuiApp : IDisposable
             ImGui.TableNextColumn();
             RenderCompactKeyValue("DLL", string.IsNullOrWhiteSpace(game.InstalledFilename) ? "-" : game.InstalledFilename);
 
+            ImGui.TableNextColumn();
+            RenderCompactKeyValue("Anti-Cheat", string.IsNullOrWhiteSpace(game.AntiCheatProvider) ? "None detected" : game.AntiCheatProvider);
+
             ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+        RenderSectionHeader("Configure");
+        if (details == null)
+        {
+            RenderCallout(
+                "Configuration unavailable",
+                "Could not load this game's configuration state.",
+                WarningColor);
+        }
+        else if (!game.IsInstalled)
+        {
+            TextMuted("Install OptiScaler to edit this game's configuration.");
+        }
+        else
+        {
+            RenderGameConfigureSection(details);
         }
 
         ImGui.Spacing();
         RenderSectionHeader("Actions");
         var installWidth = GetButtonWidth("Install OptiScaler", 160f);
-        var configureWidth = GetButtonWidth("Configure", 120f);
-        var updateWidth = GetButtonWidth("Update Version", 150f);
         var uninstallWidth = GetButtonWidth("Uninstall", 120f);
         var removeWidth = GetButtonWidth("Remove From Library", 180f);
 
@@ -1121,19 +1305,6 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
         else
         {
-            ContinueOnSameLineIfFits(configureWidth);
-            if (ImGui.Button("Configure", new Vector2(configureWidth, 0f)))
-            {
-                OpenConfigDialog(game);
-            }
-
-            ContinueOnSameLineIfFits(updateWidth);
-            if (ImGui.Button("Update Version", new Vector2(updateWidth, 0f)))
-            {
-                OpenUpdateDialog(game);
-            }
-
-            ContinueOnSameLineIfFits(uninstallWidth);
             if (ImGui.Button("Uninstall", new Vector2(uninstallWidth, 0f)))
             {
                 QueueConfirmation(
@@ -1165,6 +1336,250 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
     }
 
+    private void RenderGameConfigureSection(GameDetailsDialogState details)
+    {
+        var config = EnsureGameDetailsConfig(details);
+        if (config == null)
+        {
+            RenderCallout(
+                "Configuration unavailable",
+                "OptiScaler.ini could not be loaded for this game.",
+                WarningColor);
+            return;
+        }
+
+        EnsureGameConfigureDefaults(config);
+
+        TextMuted("Expand a group, adjust values, then save to write OptiScaler.ini for this game.");
+        ImGui.Spacing();
+
+        if (!ImGui.BeginTable("GameConfigureLayout", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings))
+        {
+            return;
+        }
+
+        ImGui.TableSetupColumn("Config", ImGuiTableColumnFlags.WidthStretch, 0.45f);
+        ImGui.TableSetupColumn("Spacer", ImGuiTableColumnFlags.WidthStretch, 0.55f);
+        ImGui.TableNextColumn();
+
+        if (ImGui.CollapsingHeader("Frame Generation"))
+        {
+            var previousInput = config.GetSetting("FrameGen", "FGInput");
+            var previousOutput = config.GetSetting("FrameGen", "FGOutput");
+            var inputChanged = RenderConfigChoiceCombo("FG Input", config, "FrameGen", "FGInput", FrameGenerationInputChoices);
+            var outputChanged = RenderConfigChoiceCombo("FG Output", config, "FrameGen", "FGOutput", FrameGenerationOutputChoices);
+            ApplyNukemsFrameGenerationCoupling(config, previousInput, previousOutput, inputChanged, outputChanged);
+            TextMuted("Nukem's forces both the input and output settings together.");
+            ImGui.Spacing();
+        }
+
+        if (ImGui.CollapsingHeader("Menu"))
+        {
+            RenderShortcutKeySetting(details, config);
+            ImGui.Spacing();
+        }
+
+        if (ImGui.CollapsingHeader("Sharpness"))
+        {
+            RenderConfigChoiceCombo("Override Sharpness", config, "Sharpness", "OverrideSharpness", BooleanChoices);
+            RenderConfigFloatSlider("Sharpness Amount", config, "Sharpness", "Sharpness", 0f, 1f, "%.2f", "0.###");
+            RenderConfigChoiceCombo("Contrast Enabled", config, "CAS", "ContrastEnabled", BooleanChoices);
+            RenderConfigFloatSlider("Contrast", config, "CAS", "Contrast", 0f, 2f, "%.2f", "0.###");
+            ImGui.Spacing();
+        }
+
+        if (ImGui.CollapsingHeader("Logging"))
+        {
+            RenderConfigChoiceCombo("Log Level", config, "Log", "LogLevel", LogLevelChoices);
+            RenderConfigChoiceCombo("Log To File", config, "Log", "LogToFile", BooleanChoices);
+            ImGui.Spacing();
+        }
+
+        if (ImGui.CollapsingHeader("Spoofing & Plugins"))
+        {
+            RenderConfigChoiceCombo("DXGI Spoofing", config, "Spoofing", "Dxgi", BooleanChoices);
+            RenderConfigChoiceCombo("Load ASI Plugins", config, "Plugins", "LoadAsiPlugins", BooleanChoices);
+            ImGui.Spacing();
+        }
+
+        var saveWidth = GetButtonWidth("Save Config", 120f);
+        var reloadWidth = GetButtonWidth("Reload Config", 130f);
+        var openFileWidth = GetButtonWidth("Open Config File", 145f);
+
+        if (ImGui.Button("Save Config", new Vector2(saveWidth, 0f)))
+        {
+            try
+            {
+                config.SaveChanges();
+                SetNotification($"Saved configuration for {details.Game.Name}.", NotificationKind.Success);
+            }
+            catch (Exception ex)
+            {
+                SetNotification(ex.Message, NotificationKind.Error);
+            }
+        }
+
+        ContinueOnSameLineIfFits(reloadWidth);
+        if (ImGui.Button("Reload Config", new Vector2(reloadWidth, 0f)))
+        {
+            config.Reload();
+            SyncShortcutKeyInput(details, config, force: true);
+            SetNotification($"Reloaded configuration for {details.Game.Name}.", NotificationKind.Info);
+        }
+
+        ContinueOnSameLineIfFits(openFileWidth);
+        if (ImGui.Button("Open Config File", new Vector2(openFileWidth, 0f)))
+        {
+            try
+            {
+                config.OpenFile();
+            }
+            catch (Exception ex)
+            {
+                SetNotification(ex.Message, NotificationKind.Error);
+            }
+        }
+
+        ImGui.EndTable();
+    }
+
+    private void EnsureGameConfigureDefaults(GameConfigViewModel config)
+    {
+        EnsureConfigChoiceValue(config, "FrameGen", "FGInput", FrameGenerationInputChoices, "nofg");
+        EnsureConfigChoiceValue(config, "FrameGen", "FGOutput", FrameGenerationOutputChoices, "nofg");
+        ApplyNukemsFrameGenerationCoupling(config, config.GetSetting("FrameGen", "FGInput"), config.GetSetting("FrameGen", "FGOutput"), inputChanged: false, outputChanged: false);
+        EnsureConfigShortcutValue(config, "Menu", "ShortcutKey", "0x2D");
+        EnsureConfigChoiceValue(config, "Sharpness", "OverrideSharpness", BooleanChoices, "false");
+        EnsureConfigFloatValue(config, "Sharpness", "Sharpness", 0.3f, "0.###");
+        EnsureConfigChoiceValue(config, "CAS", "ContrastEnabled", BooleanChoices, "false");
+        EnsureConfigFloatValue(config, "CAS", "Contrast", 0f, "0.###");
+        EnsureConfigChoiceValue(config, "Log", "LogLevel", LogLevelChoices, "1");
+        EnsureConfigChoiceValue(config, "Log", "LogToFile", BooleanChoices, "false");
+        EnsureConfigChoiceValue(config, "Spoofing", "Dxgi", BooleanChoices, GetDefaultDxgiConfigValue());
+        EnsureConfigChoiceValue(config, "Plugins", "LoadAsiPlugins", BooleanChoices, "false");
+    }
+
+    private void RenderShortcutKeySetting(GameDetailsDialogState details, GameConfigViewModel config)
+    {
+        SyncShortcutKeyInput(details, config);
+
+        ImGui.TextDisabled("Overlay Shortcut");
+
+        var buttonLabel = details.IsCapturingShortcutKey
+            ? "Press a key... (Esc = None)"
+            : details.ShortcutKeyInput;
+        if (string.IsNullOrWhiteSpace(buttonLabel))
+        {
+            buttonLabel = "Detect Shortcut";
+        }
+
+        if (details.IsCapturingShortcutKey)
+        {
+            if (TryDetectShortcutCapture(out var capturedVirtualKey))
+            {
+                var configValue = FormatShortcutKeyConfigValue(capturedVirtualKey);
+                config.SetSetting("Menu", "ShortcutKey", configValue);
+                details.ShortcutKeyConfigValue = configValue;
+                details.ShortcutKeyInput = FormatShortcutKeyDisplay(capturedVirtualKey);
+                details.ShortcutKeyErrorMessage = null;
+                details.IsCapturingShortcutKey = false;
+            }
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Button, details.IsCapturingShortcutKey ? PanelRaisedBackgroundColor : ImGui.GetStyle().Colors[(int)ImGuiCol.Button]);
+        ImGui.SetNextItemWidth(GetConfigControlWidth());
+        if (ImGui.Button(buttonLabel, new Vector2(GetConfigControlWidth(), 0f)))
+        {
+            details.IsCapturingShortcutKey = !details.IsCapturingShortcutKey;
+            details.ShortcutKeyErrorMessage = null;
+        }
+        ImGui.PopStyleColor();
+
+        TextMuted("Click the button, then press the key you want. Press Esc to disable the shortcut.");
+        if (details.IsCapturingShortcutKey)
+        {
+            ImGui.TextColored(InfoColor, "Waiting for key press...");
+        }
+        TextMuted($"Stored as {config.GetSetting("Menu", "ShortcutKey")}.");
+    }
+
+    private static void ApplyNukemsFrameGenerationCoupling(GameConfigViewModel config, string previousInput, string previousOutput, bool inputChanged, bool outputChanged)
+    {
+        var currentInput = config.GetSetting("FrameGen", "FGInput");
+        var currentOutput = config.GetSetting("FrameGen", "FGOutput");
+
+        if (inputChanged &&
+            previousInput.Equals("nukems", StringComparison.OrdinalIgnoreCase) &&
+            currentOutput.Equals("nukems", StringComparison.OrdinalIgnoreCase) &&
+            !currentInput.Equals("nukems", StringComparison.OrdinalIgnoreCase))
+        {
+            config.SetSetting("FrameGen", "FGOutput", "nofg");
+            return;
+        }
+
+        if (outputChanged &&
+            previousOutput.Equals("nukems", StringComparison.OrdinalIgnoreCase) &&
+            currentInput.Equals("nukems", StringComparison.OrdinalIgnoreCase) &&
+            !currentOutput.Equals("nukems", StringComparison.OrdinalIgnoreCase))
+        {
+            config.SetSetting("FrameGen", "FGInput", "nofg");
+            return;
+        }
+
+        if (currentInput.Equals("nukems", StringComparison.OrdinalIgnoreCase) &&
+            !currentOutput.Equals("nukems", StringComparison.OrdinalIgnoreCase))
+        {
+            config.SetSetting("FrameGen", "FGOutput", "nukems");
+            return;
+        }
+
+        if (currentOutput.Equals("nukems", StringComparison.OrdinalIgnoreCase) &&
+            !currentInput.Equals("nukems", StringComparison.OrdinalIgnoreCase))
+        {
+            config.SetSetting("FrameGen", "FGInput", "nukems");
+        }
+    }
+
+    private static void SyncShortcutKeyInput(GameDetailsDialogState details, GameConfigViewModel config, bool force = false)
+    {
+        var currentValue = config.GetSetting("Menu", "ShortcutKey");
+        if (!force && string.Equals(details.ShortcutKeyConfigValue, currentValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        details.ShortcutKeyConfigValue = currentValue;
+        details.ShortcutKeyInput = FormatShortcutKeyDisplay(currentValue);
+        details.ShortcutKeyErrorMessage = null;
+    }
+
+    private GameConfigViewModel? EnsureGameDetailsConfig(GameDetailsDialogState details)
+    {
+        if (!details.Game.IsInstalled)
+        {
+            details.ConfigViewModel = null;
+            return null;
+        }
+
+        if (details.ConfigViewModel != null &&
+            details.ConfigViewModel.GamePath.Equals(details.Game.GamePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return details.ConfigViewModel;
+        }
+
+        try
+        {
+            details.ConfigViewModel = _mainViewModel.Dashboard.CreateGameConfig(details.Game);
+        }
+        catch (Exception ex)
+        {
+            details.ConfigViewModel = null;
+            SetNotification(ex.Message, NotificationKind.Error);
+        }
+
+        return details.ConfigViewModel;
+    }
+
     private void RenderGameDetailsWindow()
     {
         if (_gameDetailsDialog == null)
@@ -1174,7 +1589,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16f, 14f));
         ImGui.BeginChild("GameDetailsContent", new Vector2(0f, -54f), PaddedPanelChildFlags);
-        RenderGameDetails(_mainViewModel.Dashboard, _gameDetailsDialog.Game);
+        RenderGameDetails(_mainViewModel.Dashboard, _gameDetailsDialog);
         ImGui.EndChild();
         ImGui.PopStyleVar();
 
@@ -1723,12 +2138,37 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 TextMuted(TrimText(selectedGame.GamePath));
                 ImGui.Spacing();
                 RenderInlinePill(selectedGame.IsInstalled ? "Installed" : "Pending install", selectedGame.IsInstalled ? SuccessColor : InfoColor);
-                ImGui.SameLine();
-                RenderInlinePill(selectedGame.CurrentVersion, selectedGame.IsInstalled ? SuccessColor : WarningColor);
-                if (!string.IsNullOrWhiteSpace(selectedGame.InstalledFilename))
+
+                if (selectedGame.IsInstalled)
                 {
                     ImGui.SameLine();
-                    RenderInlinePill(selectedGame.InstalledFilename, InfoColor);
+                    if (RenderClickableInlinePill($"DashboardHero::Version::{selectedGame.GamePath}", GetOptiScalerQuickPillText(selectedGame), SuccessColor))
+                    {
+                        OpenUpdateDialog(selectedGame);
+                    }
+
+                    ImGui.SameLine();
+                    if (RenderClickableInlinePill($"DashboardHero::Components::{selectedGame.GamePath}", GetUpscalersFgQuickPillText(), InfoColor))
+                    {
+                        OpenComponentDllDialog(selectedGame);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(selectedGame.InstalledFilename))
+                    {
+                        ImGui.SameLine();
+                        RenderInlinePill(selectedGame.InstalledFilename, InfoColor);
+                    }
+                }
+                else
+                {
+                    ImGui.SameLine();
+                    RenderInlinePill(selectedGame.CurrentVersion, WarningColor);
+                }
+
+                if (!string.IsNullOrWhiteSpace(selectedGame.AntiCheatProvider))
+                {
+                    ImGui.SameLine();
+                    RenderInlinePill(selectedGame.AntiCheatProvider, WarningColor);
                 }
 
                 ImGui.Spacing();
@@ -1767,6 +2207,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
             RenderHeroSignal("Installed", installedCount.ToString(), SuccessColor);
             RenderHeroSignal("Pending", pendingCount.ToString(), WarningColor);
             RenderHeroSignal("Saved versions", dashboard.DownloadedVersions.Count.ToString(), new Vector4(0.72f, 0.84f, 0.55f, 1f));
+            if (selectedGame != null)
+            {
+                RenderHeroSignal("Anti-cheat", string.IsNullOrWhiteSpace(selectedGame.AntiCheatProvider) ? "None detected" : selectedGame.AntiCheatProvider, string.IsNullOrWhiteSpace(selectedGame.AntiCheatProvider) ? InfoColor : WarningColor);
+            }
             TextMuted($"Default install version: {dashboard.SelectedVersion?.TagName ?? "None selected"}");
 
             ImGui.EndTable();
@@ -1799,6 +2243,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             ImGui.TableNextColumn();
             ImGui.TextColored(InfoColor, "Status");
             RenderHeroSignal("Version", game.CurrentVersion, game.IsInstalled ? SuccessColor : WarningColor);
+            RenderHeroSignal("Anti-cheat", string.IsNullOrWhiteSpace(game.AntiCheatProvider) ? "None detected" : game.AntiCheatProvider, string.IsNullOrWhiteSpace(game.AntiCheatProvider) ? InfoColor : WarningColor);
             RenderHeroSignal("Default version", dashboard.SelectedVersion?.TagName ?? "None selected", InfoColor);
             RenderHeroSignal("Next step", game.IsInstalled ? "Configure or update" : "Install", game.IsInstalled ? SuccessColor : InfoColor);
 
@@ -1972,7 +2417,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var selectedPath = NativeDialogs.PickFile(
             "Select Game Executable",
             "Executable Files (*.exe)|*.exe|All Files (*.*)|*.*",
-            _gameDetailsWindow?.WindowHandle ?? _hwnd);
+            _gameDetailsWindow?.WindowHandle ?? _hwnd,
+            game.GamePath);
         if (string.IsNullOrWhiteSpace(selectedPath))
         {
             return;
@@ -1982,6 +2428,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             await dashboard.UpdateGameExecutable(game, selectedPath);
             _selectedGamePath = game.GamePath;
+            if (_gameDetailsDialog != null)
+            {
+                _gameDetailsDialog.ConfigViewModel = null;
+            }
 
             if (_gameDetailsWindow != null && !_gameDetailsWindow.IsClosed)
             {
@@ -2025,6 +2475,100 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         ImGui.Dummy(size);
         DrawInlinePill(drawList, min, text, accent);
+    }
+
+    private static bool RenderClickableInlinePill(string id, string text, Vector4 accent)
+    {
+        var min = ImGui.GetCursorScreenPos();
+        var size = GetInlinePillSize(text);
+        var drawList = ImGui.GetWindowDrawList();
+
+        ImGui.InvisibleButton(id, size);
+        var hovered = ImGui.IsItemHovered();
+        var clicked = ImGui.IsItemClicked();
+        if (hovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        DrawInlinePill(drawList, min, text, hovered
+            ? new Vector4(MathF.Min(1f, accent.X + 0.10f), MathF.Min(1f, accent.Y + 0.10f), MathF.Min(1f, accent.Z + 0.10f), accent.W)
+            : accent);
+        return clicked;
+    }
+
+    private static string GetOptiScalerQuickPillText(GameInstance game)
+    {
+        return $"OptiScaler {game.CurrentVersion}";
+    }
+
+    private static string GetUpscalersFgQuickPillText()
+    {
+        return "Upscalers/FG";
+    }
+
+    private static IReadOnlyList<ComponentDllEntry> GetComponentDllEntries(GameInstance game)
+    {
+        return new[]
+        {
+            CreateComponentDllEntry(game.GamePath, "FSR Upscaler", "amd_fidelityfx_upscaler_dx12.dll"),
+            CreateComponentDllEntry(game.GamePath, "FSR FG", "amd_fidelityfx_framegeneration_dx12.dll"),
+            CreateComponentDllEntry(game.GamePath, "XeSS", "libxess.dll"),
+            CreateComponentDllEntry(game.GamePath, "XeFG", "libxess_fg.dll"),
+        };
+    }
+
+    private static ComponentDllEntry CreateComponentDllEntry(string gamePath, string label, string fileName)
+    {
+        var version = GetInstalledDllVersion(gamePath, fileName, out var isDetected);
+        return new ComponentDllEntry(label, fileName, version, isDetected);
+    }
+
+    private static string GetInstalledDllVersion(string gamePath, string fileName, out bool isDetected)
+    {
+        var path = Path.Combine(gamePath, fileName);
+        if (!File.Exists(path))
+        {
+            isDetected = false;
+            return "Not detected";
+        }
+
+        try
+        {
+            var versionInfo = FileVersionInfo.GetVersionInfo(path);
+            var productVersion = NormalizeDetectedDllVersion(versionInfo.ProductVersion, trimTrailingBuildSegment: false);
+            if (!string.IsNullOrWhiteSpace(productVersion))
+            {
+                isDetected = true;
+                return productVersion;
+            }
+
+            var fileVersion = NormalizeDetectedDllVersion(versionInfo.FileVersion, trimTrailingBuildSegment: true);
+            isDetected = true;
+            return string.IsNullOrWhiteSpace(fileVersion) ? "Unknown" : fileVersion;
+        }
+        catch
+        {
+            isDetected = true;
+            return "Unknown";
+        }
+    }
+
+    private static string NormalizeDetectedDllVersion(string? rawVersion, bool trimTrailingBuildSegment)
+    {
+        if (string.IsNullOrWhiteSpace(rawVersion))
+        {
+            return string.Empty;
+        }
+
+        var version = rawVersion.Trim();
+        version = Regex.Replace(version, @"\s+\(([0-9a-f]{7,40})\)$", string.Empty, RegexOptions.IgnoreCase);
+        if (trimTrailingBuildSegment && version.EndsWith(".0", StringComparison.Ordinal) && version.Split('.').Length >= 4)
+        {
+            version = version[..^2];
+        }
+
+        return version.Trim();
     }
 
     private static void RenderHeroSignal(string label, string value, Vector4 accent)
@@ -2222,6 +2766,51 @@ public sealed class OptinstallerImGuiApp : IDisposable
         if (ImGui.Button("Cancel", new Vector2(110f, 0f)))
         {
             CloseUpdateDialog();
+        }
+    }
+
+    private void RenderComponentDllWindow()
+    {
+        if (_componentDllDialog == null)
+        {
+            return;
+        }
+
+        var game = _componentDllDialog.Game;
+        ImGui.TextWrapped("Review the optional upscaler and frame generation DLLs next to OptiScaler. DLL swapping is not wired yet, so the change controls are placeholders for now.");
+        ImGui.Spacing();
+
+        if (ImGui.BeginTable("ComponentDllTable", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Component", ImGuiTableColumnFlags.WidthStretch, 1.2f);
+            ImGui.TableSetupColumn("DLL", ImGuiTableColumnFlags.WidthStretch, 1.6f);
+            ImGui.TableSetupColumn("Version", ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 110f);
+            ImGui.TableHeadersRow();
+
+            foreach (var component in GetComponentDllEntries(game))
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(component.Label);
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(component.FileName);
+                ImGui.TableNextColumn();
+                ImGui.TextColored(component.IsDetected ? SuccessColor : WarningColor, component.Version);
+                ImGui.TableNextColumn();
+                if (ImGui.Button($"Change##{component.FileName}", new Vector2(90f, 0f)))
+                {
+                    SetNotification($"Changing {component.Label} DLLs is not implemented yet.", NotificationKind.Info);
+                }
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button("Close", new Vector2(110f, 0f)))
+        {
+            CloseComponentDllDialog();
         }
     }
 
@@ -2612,6 +3201,20 @@ public sealed class OptinstallerImGuiApp : IDisposable
         });
     }
 
+    private void OpenComponentDllDialog(GameInstance game)
+    {
+        _componentDllDialog = new ComponentDllDialogState
+        {
+            Game = game,
+        };
+
+        PreserveImGuiContext(() =>
+        {
+            _componentDllWindow?.Dispose();
+            _componentDllWindow = CreateNativeWindow($"Upscalers / FG - {game.Name}", 760, 340, "ComponentDllRoot", RenderComponentDllWindow);
+        });
+    }
+
     private void QueueConfirmation(ConfirmationHost host, string title, string message, string confirmLabel, Func<Task> confirmAction, string? successMessage)
     {
         _confirmation = new ConfirmationDialogState(
@@ -2648,6 +3251,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         _updateDialog = null;
         _updateWindow?.RequestClose();
+    }
+
+    private void CloseComponentDllDialog()
+    {
+        _componentDllDialog = null;
+        _componentDllWindow?.RequestClose();
     }
 
     private void CloseConfigDialog()
@@ -2860,8 +3469,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var rowEndCursorPos = ImGui.GetCursorPos();
 
         var selectWidth = MathF.Max(1f, availableWidth - actionsWidth - 24f);
+        var selectHeight = MathF.Min(rowHeight, MathF.Max(44f, (lineHeight * 2f) + 20f));
         ImGui.SetCursorScreenPos(min);
-        ImGui.InvisibleButton($"GameSelect::{game.GamePath}", new Vector2(selectWidth, rowHeight));
+        ImGui.InvisibleButton($"GameSelect::{game.GamePath}", new Vector2(selectWidth, selectHeight));
         var hovered = ImGui.IsItemHovered();
         var selectClicked = ImGui.IsItemClicked();
 
@@ -2876,6 +3486,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var detail = string.IsNullOrWhiteSpace(game.InstalledFilename)
             ? "Installed"
             : $"Installed - Target DLL: {game.InstalledFilename}";
+        if (!string.IsNullOrWhiteSpace(game.AntiCheatProvider))
+        {
+            detail += $" - {game.AntiCheatProvider}";
+        }
 
         drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 2f);
         drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 2f, ImDrawFlags.None, 1f);
@@ -2895,13 +3509,35 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         drawList.AddText(new Vector2(contentLeft, textStartY), textColor, game.Name);
         drawList.AddText(new Vector2(contentLeft, detailY), detailColor, detail);
-        DrawInstalledGamePills(drawList, pillsOrigin, pillsWidth, game);
+        var pillLayouts = DrawInstalledGamePills(drawList, pillsOrigin, pillsWidth, game);
 
         var buttonY = min.Y + MathF.Max(8f, (rowHeight - buttonHeight) * 0.5f);
         var uninstallX = max.X - actionsWidth - 16f;
         DashboardGameRowAction action = selectClicked ? DashboardGameRowAction.Select : DashboardGameRowAction.None;
 
         ImGui.PushID(game.GamePath);
+        ImGui.SetCursorScreenPos(pillLayouts.VersionPill.Min);
+        if (ImGui.InvisibleButton("UpdatePill", pillLayouts.VersionPill.Size))
+        {
+            action = DashboardGameRowAction.UpdateVersion;
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        ImGui.SetCursorScreenPos(pillLayouts.ComponentsPill.Min);
+        if (ImGui.InvisibleButton("ComponentsPill", pillLayouts.ComponentsPill.Size))
+        {
+            action = DashboardGameRowAction.OpenComponentDlls;
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
         ImGui.SetCursorScreenPos(new Vector2(uninstallX, buttonY));
         if (ImGui.Button("Uninstall", new Vector2(uninstallWidth, 0f)))
         {
@@ -2957,6 +3593,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var border = Vector4.Lerp(new Vector4(PanelBorderColor.X, PanelBorderColor.Y, PanelBorderColor.Z, 0.50f), new Vector4(accent.X, accent.Y, accent.Z, 0.82f), emphasis);
         var textColor = ImGui.ColorConvertFloat4ToU32(PrimaryTextColor);
         var detailColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(MutedTextColor, accent, 0.35f));
+        var detail = string.IsNullOrWhiteSpace(game.AntiCheatProvider)
+            ? "Not installed"
+            : $"Not installed - {game.AntiCheatProvider}";
 
         drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 2f);
         drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 2f, ImDrawFlags.None, 1f);
@@ -2974,7 +3613,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
         var contentLeft = min.X + 16f;
         drawList.AddText(new Vector2(contentLeft, textStartY), textColor, game.Name);
-        drawList.AddText(new Vector2(contentLeft, textStartY + lineHeight + 3f), detailColor, "Not installed");
+        drawList.AddText(new Vector2(contentLeft, textStartY + lineHeight + 3f), detailColor, detail);
 
         var buttonY = min.Y + MathF.Max(8f, (rowHeight - buttonHeight) * 0.5f);
         var installX = max.X - actionsWidth - 16f;
@@ -3007,29 +3646,30 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var cursorY = 0f;
         var lineHeight = 0f;
 
-        MeasureInlinePillLayout($"OptiScaler {game.CurrentVersion}", maxWidth, ref cursorX, ref cursorY, ref lineHeight);
-        MeasureInlinePillLayout(GetFsrQuickPillText(game), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        MeasureInlinePillLayout(GetOptiScalerQuickPillText(game), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        MeasureInlinePillLayout(GetUpscalersFgQuickPillText(), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
         MeasureInlinePillLayout(GetOptiPatcherQuickPillText(game), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
 
         return lineHeight <= 0f ? 0f : cursorY + lineHeight;
     }
 
-    private static void DrawInstalledGamePills(ImDrawListPtr drawList, Vector2 origin, float maxWidth, GameInstance game)
+    private static InstalledGamePillLayouts DrawInstalledGamePills(ImDrawListPtr drawList, Vector2 origin, float maxWidth, GameInstance game)
     {
         var cursorX = 0f;
         var cursorY = 0f;
         var lineHeight = 0f;
 
-        DrawInlinePillLayout(drawList, origin, $"OptiScaler {game.CurrentVersion}", SuccessColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
-        DrawInlinePillLayout(drawList, origin, GetFsrQuickPillText(game), string.IsNullOrWhiteSpace(game.FsrVersion) ? PanelBorderColor : InfoColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
-        DrawInlinePillLayout(drawList, origin, GetOptiPatcherQuickPillText(game), game.IsOptiPatcherInstalled ? SuccessColor : PanelBorderColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
-    }
+        var versionText = GetOptiScalerQuickPillText(game);
+        var componentsText = GetUpscalersFgQuickPillText();
+        var optiPatcherText = GetOptiPatcherQuickPillText(game);
 
-    private static string GetFsrQuickPillText(GameInstance game)
-    {
-        return string.IsNullOrWhiteSpace(game.FsrVersion)
-            ? "FSR not detected"
-            : $"FSR {game.FsrVersion}";
+        var versionMin = DrawInlinePillLayout(drawList, origin, versionText, SuccessColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        var componentsMin = DrawInlinePillLayout(drawList, origin, componentsText, InfoColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+        DrawInlinePillLayout(drawList, origin, optiPatcherText, game.IsOptiPatcherInstalled ? SuccessColor : PanelBorderColor, maxWidth, ref cursorX, ref cursorY, ref lineHeight);
+
+        return new InstalledGamePillLayouts(
+            new InlinePillLayout(versionMin, GetInlinePillSize(versionText)),
+            new InlinePillLayout(componentsMin, GetInlinePillSize(componentsText)));
     }
 
     private static string GetOptiPatcherQuickPillText(GameInstance game)
@@ -3044,7 +3684,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         LayoutInlinePill(Vector2.Zero, GetInlinePillSize(text), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
     }
 
-    private static void DrawInlinePillLayout(
+    private static Vector2 DrawInlinePillLayout(
         ImDrawListPtr drawList,
         Vector2 origin,
         string text,
@@ -3056,6 +3696,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         var pillMin = LayoutInlinePill(origin, GetInlinePillSize(text), maxWidth, ref cursorX, ref cursorY, ref lineHeight);
         DrawInlinePill(drawList, pillMin, text, accent);
+        return pillMin;
     }
 
     private static Vector2 LayoutInlinePill(
@@ -3341,6 +3982,425 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         ImGui.EndCombo();
+    }
+
+    private static bool RenderConfigChoiceCombo(string label, GameConfigViewModel config, string section, string key, IReadOnlyList<ConfigChoice> choices)
+    {
+        var currentValue = config.GetSetting(section, key);
+        var preview = currentValue;
+        for (var index = 0; index < choices.Count; index++)
+        {
+            if (!choices[index].Value.Equals(currentValue, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            preview = choices[index].Label;
+            break;
+        }
+
+        var changed = false;
+        ImGui.TextDisabled(label);
+        ImGui.SetNextItemWidth(GetConfigControlWidth());
+        if (!ImGui.BeginCombo($"##{section}.{key}", preview))
+        {
+            return false;
+        }
+
+        foreach (var choice in choices)
+        {
+            var isSelected = choice.Value.Equals(currentValue, StringComparison.OrdinalIgnoreCase);
+            if (ImGui.Selectable(choice.Label, isSelected))
+            {
+                config.SetSetting(section, key, choice.Value);
+                currentValue = choice.Value;
+                changed = true;
+            }
+
+            if (isSelected)
+            {
+                ImGui.SetItemDefaultFocus();
+            }
+        }
+
+        ImGui.EndCombo();
+        return changed;
+    }
+
+    private static bool RenderConfigFloatSlider(
+        string label,
+        GameConfigViewModel config,
+        string section,
+        string key,
+        float min,
+        float max,
+        string displayFormat,
+        string storageFormat)
+    {
+        var rawValue = config.GetSetting(section, key);
+        var value = min;
+        if (!float.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out value) ||
+            float.IsNaN(value) ||
+            float.IsInfinity(value))
+        {
+            value = min;
+        }
+
+        var changed = false;
+        ImGui.PushID($"{section}.{key}");
+        ImGui.TextDisabled(label);
+
+        ImGui.SetNextItemWidth(GetConfigControlWidth());
+        if (ImGui.SliderFloat("##Value", ref value, min, max, displayFormat))
+        {
+            config.SetSetting(section, key, value.ToString(storageFormat, CultureInfo.InvariantCulture));
+            changed = true;
+        }
+
+        ImGui.PopID();
+        return changed;
+    }
+
+    private static void EnsureConfigChoiceValue(GameConfigViewModel config, string section, string key, IReadOnlyList<ConfigChoice> choices, string defaultValue)
+    {
+        var currentValue = config.GetSetting(section, key);
+        var hasMatch = false;
+        foreach (var choice in choices)
+        {
+            if (!choice.Value.Equals(currentValue, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            hasMatch = true;
+            break;
+        }
+
+        if (!hasMatch)
+        {
+            config.SetSetting(section, key, defaultValue);
+        }
+    }
+
+    private static void EnsureConfigFloatValue(GameConfigViewModel config, string section, string key, float defaultValue, string storageFormat)
+    {
+        var rawValue = config.GetSetting(section, key);
+        if (!float.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ||
+            float.IsNaN(value) ||
+            float.IsInfinity(value))
+        {
+            config.SetSetting(section, key, defaultValue.ToString(storageFormat, CultureInfo.InvariantCulture));
+        }
+    }
+
+    private static void EnsureConfigShortcutValue(GameConfigViewModel config, string section, string key, string defaultValue)
+    {
+        var rawValue = config.GetSetting(section, key);
+        if (!TryParseShortcutKeyConfigValue(rawValue, out _))
+        {
+            config.SetSetting(section, key, defaultValue);
+        }
+    }
+
+    private static bool TryDetectShortcutCapture(out int virtualKey)
+    {
+        if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+        {
+            virtualKey = -1;
+            return true;
+        }
+
+        foreach (var key in ShortcutCaptureKeys)
+        {
+            if (!ImGui.IsKeyPressed(key.ImGuiKey))
+            {
+                continue;
+            }
+
+            virtualKey = key.VirtualKey;
+            return true;
+        }
+
+        virtualKey = 0;
+        return false;
+    }
+
+    private static bool TryParseShortcutKeyInput(string input, out string configValue, out string normalizedDisplay)
+    {
+        var trimmed = input.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            configValue = string.Empty;
+            normalizedDisplay = string.Empty;
+            return false;
+        }
+
+        if (TryParseShortcutKeyConfigValue(trimmed, out var rawVirtualKey))
+        {
+            configValue = FormatShortcutKeyConfigValue(rawVirtualKey);
+            normalizedDisplay = FormatShortcutKeyDisplay(rawVirtualKey);
+            return true;
+        }
+
+        if (trimmed.Length == 1 && TryResolveShortcutKeyCharacter(trimmed[0], out var characterVirtualKey))
+        {
+            configValue = FormatShortcutKeyConfigValue(characterVirtualKey);
+            normalizedDisplay = FormatShortcutKeyDisplay(characterVirtualKey);
+            return true;
+        }
+
+        var normalizedName = NormalizeShortcutKeyName(trimmed);
+        if (TryResolveShortcutKeyName(normalizedName, out var namedVirtualKey))
+        {
+            configValue = FormatShortcutKeyConfigValue(namedVirtualKey);
+            normalizedDisplay = FormatShortcutKeyDisplay(namedVirtualKey);
+            return true;
+        }
+
+        configValue = string.Empty;
+        normalizedDisplay = trimmed;
+        return false;
+    }
+
+    private static bool TryParseShortcutKeyConfigValue(string rawValue, out int virtualKey)
+    {
+        var trimmed = rawValue.Trim();
+        if (trimmed.Equals("-1", StringComparison.OrdinalIgnoreCase))
+        {
+            virtualKey = -1;
+            return true;
+        }
+
+        if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(trimmed[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out virtualKey) &&
+            virtualKey is >= 0 and <= 0xFF)
+        {
+            return true;
+        }
+
+        if (int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out virtualKey) &&
+            virtualKey is >= 0 and <= 0xFF)
+        {
+            return true;
+        }
+
+        virtualKey = 0;
+        return false;
+    }
+
+    private static string FormatShortcutKeyConfigValue(int virtualKey)
+    {
+        return virtualKey == -1
+            ? "-1"
+            : $"0x{virtualKey:X2}";
+    }
+
+    private static string FormatShortcutKeyDisplay(string rawValue)
+    {
+        return TryParseShortcutKeyConfigValue(rawValue, out var virtualKey)
+            ? FormatShortcutKeyDisplay(virtualKey)
+            : rawValue;
+    }
+
+    private static string FormatShortcutKeyDisplay(int virtualKey)
+    {
+        if (virtualKey == -1)
+        {
+            return "None";
+        }
+
+        if (virtualKey is >= 'A' and <= 'Z')
+        {
+            return ((char)virtualKey).ToString();
+        }
+
+        if (virtualKey is >= '0' and <= '9')
+        {
+            return ((char)virtualKey).ToString();
+        }
+
+        if (virtualKey is >= Win32Native.VK_F1 and <= 0x87)
+        {
+            return $"F{virtualKey - Win32Native.VK_F1 + 1}";
+        }
+
+        if (virtualKey is >= Win32Native.VK_NUMPAD0 and <= Win32Native.VK_NUMPAD9)
+        {
+            return $"Numpad {virtualKey - Win32Native.VK_NUMPAD0}";
+        }
+
+        return virtualKey switch
+        {
+            Win32Native.VK_INSERT => "Insert",
+            Win32Native.VK_HOME => "Home",
+            Win32Native.VK_END => "End",
+            Win32Native.VK_PRIOR => "Page Up",
+            Win32Native.VK_NEXT => "Page Down",
+            Win32Native.VK_BACK => "Backspace",
+            Win32Native.VK_DELETE => "Delete",
+            Win32Native.VK_RETURN => "Enter",
+            Win32Native.VK_ESCAPE => "Escape",
+            Win32Native.VK_TAB => "Tab",
+            Win32Native.VK_SPACE => "Space",
+            Win32Native.VK_LEFT => "Left Arrow",
+            Win32Native.VK_RIGHT => "Right Arrow",
+            Win32Native.VK_UP => "Up Arrow",
+            Win32Native.VK_DOWN => "Down Arrow",
+            Win32Native.VK_SNAPSHOT => "Print Screen",
+            Win32Native.VK_PAUSE => "Pause",
+            Win32Native.VK_CAPITAL => "Caps Lock",
+            Win32Native.VK_SCROLL => "Scroll Lock",
+            Win32Native.VK_NUMLOCK => "Num Lock",
+            Win32Native.VK_APPS => "Menu",
+            Win32Native.VK_ADD => "Numpad +",
+            Win32Native.VK_SUBTRACT => "Numpad -",
+            Win32Native.VK_MULTIPLY => "Numpad *",
+            Win32Native.VK_DIVIDE => "Numpad /",
+            Win32Native.VK_DECIMAL => "Numpad .",
+            Win32Native.VK_OEM_3 => "`",
+            Win32Native.VK_OEM_MINUS => "-",
+            Win32Native.VK_OEM_PLUS => "=",
+            Win32Native.VK_OEM_4 => "[",
+            Win32Native.VK_OEM_6 => "]",
+            Win32Native.VK_OEM_5 => "\\",
+            Win32Native.VK_OEM_1 => ";",
+            Win32Native.VK_OEM_7 => "'",
+            Win32Native.VK_OEM_COMMA => ",",
+            Win32Native.VK_OEM_PERIOD => ".",
+            Win32Native.VK_OEM_2 => "/",
+            _ => FormatShortcutKeyConfigValue(virtualKey),
+        };
+    }
+
+    private static string NormalizeShortcutKeyName(string value)
+    {
+        Span<char> buffer = stackalloc char[value.Length];
+        var length = 0;
+        foreach (var c in value)
+        {
+            if (!char.IsLetterOrDigit(c))
+            {
+                continue;
+            }
+
+            buffer[length++] = char.ToUpperInvariant(c);
+        }
+
+        return new string(buffer[..length]);
+    }
+
+    private static bool TryResolveShortcutKeyName(string normalizedName, out int virtualKey)
+    {
+        if (normalizedName.Length > 1 &&
+            normalizedName[0] == 'F' &&
+            int.TryParse(normalizedName[1..], NumberStyles.None, CultureInfo.InvariantCulture, out var functionKey) &&
+            functionKey is >= 1 and <= 24)
+        {
+            virtualKey = Win32Native.VK_F1 + functionKey - 1;
+            return true;
+        }
+
+        if (normalizedName.StartsWith("NUMPAD", StringComparison.Ordinal) &&
+            int.TryParse(normalizedName[6..], NumberStyles.None, CultureInfo.InvariantCulture, out var numpadKey) &&
+            numpadKey is >= 0 and <= 9)
+        {
+            virtualKey = Win32Native.VK_NUMPAD0 + numpadKey;
+            return true;
+        }
+
+        virtualKey = normalizedName switch
+        {
+            "NONE" or "DISABLED" or "DISABLE" or "OFF" => -1,
+            "INSERT" or "INS" => Win32Native.VK_INSERT,
+            "HOME" => Win32Native.VK_HOME,
+            "END" => Win32Native.VK_END,
+            "PAGEUP" or "PGUP" or "PRIOR" => Win32Native.VK_PRIOR,
+            "PAGEDOWN" or "PGDN" or "NEXT" => Win32Native.VK_NEXT,
+            "BACKSPACE" or "BACK" or "BKSP" => Win32Native.VK_BACK,
+            "DELETE" or "DEL" => Win32Native.VK_DELETE,
+            "ENTER" or "RETURN" => Win32Native.VK_RETURN,
+            "ESC" or "ESCAPE" => Win32Native.VK_ESCAPE,
+            "TAB" => Win32Native.VK_TAB,
+            "SPACE" or "SPACEBAR" => Win32Native.VK_SPACE,
+            "LEFT" or "LEFTARROW" => Win32Native.VK_LEFT,
+            "RIGHT" or "RIGHTARROW" => Win32Native.VK_RIGHT,
+            "UP" or "UPARROW" => Win32Native.VK_UP,
+            "DOWN" or "DOWNARROW" => Win32Native.VK_DOWN,
+            "PRINTSCREEN" or "PRTSC" or "PRTSCN" or "SNAPSHOT" => Win32Native.VK_SNAPSHOT,
+            "PAUSE" => Win32Native.VK_PAUSE,
+            "CAPSLOCK" => Win32Native.VK_CAPITAL,
+            "SCROLLLOCK" => Win32Native.VK_SCROLL,
+            "NUMLOCK" => Win32Native.VK_NUMLOCK,
+            "MENU" or "APPS" or "CONTEXTMENU" => Win32Native.VK_APPS,
+            _ => 0,
+        };
+
+        return virtualKey != 0 || normalizedName is "NONE" or "DISABLED" or "DISABLE" or "OFF";
+    }
+
+    private static bool TryResolveShortcutKeyCharacter(char value, out int virtualKey)
+    {
+        var upper = char.ToUpperInvariant(value);
+        if (upper is >= 'A' and <= 'Z' || upper is >= '0' and <= '9')
+        {
+            virtualKey = upper;
+            return true;
+        }
+
+        virtualKey = value switch
+        {
+            ' ' => Win32Native.VK_SPACE,
+            '`' or '~' => Win32Native.VK_OEM_3,
+            '-' or '_' => Win32Native.VK_OEM_MINUS,
+            '=' or '+' => Win32Native.VK_OEM_PLUS,
+            '[' or '{' => Win32Native.VK_OEM_4,
+            ']' or '}' => Win32Native.VK_OEM_6,
+            '\\' or '|' => Win32Native.VK_OEM_5,
+            ';' or ':' => Win32Native.VK_OEM_1,
+            '\'' or '"' => Win32Native.VK_OEM_7,
+            ',' or '<' => Win32Native.VK_OEM_COMMA,
+            '.' or '>' => Win32Native.VK_OEM_PERIOD,
+            '/' or '?' => Win32Native.VK_OEM_2,
+            _ => 0,
+        };
+
+        return virtualKey != 0;
+    }
+
+    private static string GetDefaultDxgiConfigValue()
+    {
+        if (!string.IsNullOrWhiteSpace(_defaultDxgiConfigValue))
+        {
+            return _defaultDxgiConfigValue;
+        }
+
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_VideoController");
+                foreach (var obj in searcher.Get())
+                {
+                    var name = obj["Name"]?.ToString() ?? string.Empty;
+                    if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _defaultDxgiConfigValue = "false";
+                        return _defaultDxgiConfigValue;
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        _defaultDxgiConfigValue = "true";
+        return _defaultDxgiConfigValue;
+    }
+
+    private static float GetConfigControlWidth(float maxWidth = 360f)
+    {
+        return MathF.Min(maxWidth, MathF.Max(220f, ImGui.GetContentRegionAvail().X));
     }
 
     private static string TrimText(string? text)
@@ -3786,6 +4846,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         Details,
         Install,
         Uninstall,
+        UpdateVersion,
+        OpenComponentDlls,
     }
 
     private sealed class UpdateDialogState
@@ -3793,6 +4855,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
         public required GameInstance Game { get; init; }
 
         public OptiScalerVersion? SelectedVersion { get; set; }
+    }
+
+    private sealed class ComponentDllDialogState
+    {
+        public required GameInstance Game { get; init; }
     }
 
     private sealed class ConfigDialogState
@@ -3812,7 +4879,27 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private sealed class GameDetailsDialogState
     {
         public required GameInstance Game { get; init; }
+
+        public GameConfigViewModel? ConfigViewModel { get; set; }
+
+        public bool IsCapturingShortcutKey { get; set; }
+
+        public string ShortcutKeyInput { get; set; } = string.Empty;
+
+        public string? ShortcutKeyConfigValue { get; set; }
+
+        public string? ShortcutKeyErrorMessage { get; set; }
     }
+
+    private sealed record ConfigChoice(string Value, string Label);
+
+    private sealed record ShortcutCaptureKey(ImGuiKey ImGuiKey, int VirtualKey);
+
+    private sealed record ComponentDllEntry(string Label, string FileName, string Version, bool IsDetected);
+
+    private sealed record InlinePillLayout(Vector2 Min, Vector2 Size);
+
+    private sealed record InstalledGamePillLayouts(InlinePillLayout VersionPill, InlinePillLayout ComponentsPill);
 
     private enum AppPage
     {

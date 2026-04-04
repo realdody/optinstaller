@@ -51,6 +51,7 @@ public class AppConfig
 {
     public List<string> SavedGamePaths { get; set; } = new();
     public List<SavedGameEntry> SavedGames { get; set; } = new();
+    public List<string> HiddenScannedGamePaths { get; set; } = new();
     public string? LastSelectedVersion { get; set; }
 }
 

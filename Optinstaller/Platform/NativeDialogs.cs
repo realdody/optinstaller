@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -35,16 +36,19 @@ public static class NativeDialogs
         }
     }
 
-    public static string? PickFile(string title, string filter, nint owner = 0)
+    public static string? PickFile(string title, string filter, nint owner = 0, string? initialPath = null)
     {
         var filterPointer = IntPtr.Zero;
         var titlePointer = IntPtr.Zero;
         var fileBufferPointer = IntPtr.Zero;
+        var initialDirPointer = IntPtr.Zero;
 
         try
         {
             filterPointer = Marshal.StringToHGlobalUni(NormalizeFilter(filter));
             titlePointer = string.IsNullOrWhiteSpace(title) ? IntPtr.Zero : Marshal.StringToHGlobalUni(title);
+            var initialDirectory = NormalizeInitialDirectory(initialPath);
+            initialDirPointer = string.IsNullOrWhiteSpace(initialDirectory) ? IntPtr.Zero : Marshal.StringToHGlobalUni(initialDirectory);
             fileBufferPointer = Marshal.AllocHGlobal(MaxFileBuffer * sizeof(char));
             Marshal.WriteInt16(fileBufferPointer, 0);
 
@@ -55,6 +59,7 @@ public static class NativeDialogs
                 Filter = filterPointer,
                 File = fileBufferPointer,
                 MaxFile = MaxFileBuffer,
+                InitialDir = initialDirPointer,
                 Title = titlePointer,
                 Flags = OpenFileNameFlags.PathMustExist | OpenFileNameFlags.FileMustExist | OpenFileNameFlags.NoChangeDir,
             };
@@ -78,11 +83,37 @@ public static class NativeDialogs
                 Marshal.FreeHGlobal(titlePointer);
             }
 
+            if (initialDirPointer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(initialDirPointer);
+            }
+
             if (fileBufferPointer != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(fileBufferPointer);
             }
         }
+    }
+
+    private static string? NormalizeInitialDirectory(string? initialPath)
+    {
+        if (string.IsNullOrWhiteSpace(initialPath))
+        {
+            return null;
+        }
+
+        if (Directory.Exists(initialPath))
+        {
+            return initialPath;
+        }
+
+        if (!File.Exists(initialPath))
+        {
+            return null;
+        }
+
+        var directory = Path.GetDirectoryName(initialPath);
+        return string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory) ? null : directory;
     }
 
     [Flags]
