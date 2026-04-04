@@ -1127,21 +1127,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
                     OpenGameDetailsDialog(game);
                     break;
                 case DashboardGameRowAction.Install:
-                    StartUiTask(async () =>
-                    {
-                        var wizard = dashboard.CreateInstallationWizard(game);
-                        wizard.SelectedFilename = dashboard.TargetFilename;
-                        wizard.EnableSpoofing = dashboard.EnableSpoofing;
-
-                        try
-                        {
-                            await wizard.InstallWithDefaultsAsync();
-                        }
-                        finally
-                        {
-                            dashboard.RefreshGameInstallation(game);
-                        }
-                    }, "Could not install OptiScaler", $"Installed OptiScaler for {game.Name}.");
+                    StartQuickInstall(game, dashboard);
                     break;
                 case DashboardGameRowAction.Uninstall:
                     QueueConfirmation(
@@ -2699,7 +2685,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.TextWrapped(_confirmation.Message);
         ImGui.Spacing();
 
-        if (ImGui.Button(_confirmation.ConfirmLabel, new Vector2(110f, 0f)))
+        var confirmButtonWidth = GetButtonWidth(_confirmation.ConfirmLabel, 110f);
+        var cancelButtonWidth = GetButtonWidth("Cancel", 110f);
+
+        if (ImGui.Button(_confirmation.ConfirmLabel, new Vector2(confirmButtonWidth, 0f)))
         {
             var action = _confirmation.ConfirmAction;
             var successMessage = _confirmation.SuccessMessage;
@@ -2718,7 +2707,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("Cancel", new Vector2(110f, 0f)))
+        if (ImGui.Button("Cancel", new Vector2(cancelButtonWidth, 0f)))
         {
             ImGui.CloseCurrentPopup();
             CloseConfirmationDialog();
@@ -3173,6 +3162,118 @@ public sealed class OptinstallerImGuiApp : IDisposable
         catch (Exception ex)
         {
             SetNotification(ex.Message, NotificationKind.Error);
+        }
+    }
+
+    private void StartQuickInstall(GameInstance game, DashboardViewModel dashboard)
+    {
+        try
+        {
+            var wizard = dashboard.CreateInstallationWizard(game);
+            wizard.SelectedFilename = dashboard.TargetFilename;
+            wizard.EnableSpoofing = dashboard.EnableSpoofing;
+
+            if (TryHandleQuickInstallConflict(game, wizard))
+            {
+                return;
+            }
+
+            StartUiTask(
+                () => RunQuickInstallAsync(game, wizard),
+                "Could not install OptiScaler",
+                $"Installed OptiScaler for {game.Name}.");
+        }
+        catch (Exception ex)
+        {
+            SetNotification(ex.Message, NotificationKind.Error);
+        }
+    }
+
+    private bool TryHandleQuickInstallConflict(GameInstance game, InstallationWizardViewModel wizard)
+    {
+        var conflict = wizard.SelectedFilenameConflict;
+        if (conflict.HasRiskyConflict)
+        {
+            if (conflict.HasRecommendedFilename)
+            {
+                var recommendedFilename = conflict.RecommendedFilename;
+                QueueConfirmation(
+                    ConfirmationHost.MainWindow,
+                    $"{conflict.TargetFilename} already in use",
+                    BuildQuickInstallConflictMessage(conflict),
+                    $"Use {recommendedFilename}",
+                    async () =>
+                    {
+                        wizard.SelectedFilename = recommendedFilename;
+                        await RunQuickInstallAsync(game, wizard);
+                    },
+                    $"Installed OptiScaler for {game.Name} using {recommendedFilename}.");
+            }
+            else
+            {
+                QueueConfirmation(
+                    ConfirmationHost.MainWindow,
+                    $"{conflict.TargetFilename} already in use",
+                    BuildQuickInstallConflictMessage(conflict),
+                    "Open Installer",
+                    () =>
+                    {
+                        OpenInstallationDialog(game);
+                        return Task.CompletedTask;
+                    },
+                    null);
+            }
+
+            return true;
+        }
+
+        if (conflict.RequiresAsiLoader && !conflict.HasDetectedAsiLoader)
+        {
+            QueueConfirmation(
+                ConfirmationHost.MainWindow,
+                "ASI loader required",
+                "OptiScaler.asi needs an existing ASI loader in the game folder. Open the installer to choose another target filename unless you already know an ASI loader is present.",
+                "Open Installer",
+                () =>
+                {
+                    OpenInstallationDialog(game);
+                    return Task.CompletedTask;
+                },
+                null);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string BuildQuickInstallConflictMessage(InstallTargetConflictInfo conflict)
+    {
+        var details = string.IsNullOrWhiteSpace(conflict.ExistingDetails)
+            ? conflict.ExistingProvider
+            : $"{conflict.ExistingProvider} ({conflict.ExistingDetails})";
+
+        if (conflict.HasRecommendedFilename)
+        {
+            if (conflict.RecommendedFilename.Equals("OptiScaler.asi", StringComparison.OrdinalIgnoreCase) && conflict.HasDetectedAsiLoader)
+            {
+                return $"{conflict.TargetFilename} is already used by {details}. Use {conflict.RecommendedFilename} instead and keep the existing loader in place. {conflict.AsiLoaderProvider} should load it automatically.";
+            }
+
+            return $"{conflict.TargetFilename} is already used by {details}. Use {conflict.RecommendedFilename} for this install, or open the full installer if you want to choose another target manually.";
+        }
+
+        return $"{conflict.TargetFilename} is already used by {details}. Open the full installer to pick another target or intentionally overwrite it.";
+    }
+
+    private async Task RunQuickInstallAsync(GameInstance game, InstallationWizardViewModel wizard)
+    {
+        try
+        {
+            await wizard.InstallWithDefaultsAsync();
+        }
+        finally
+        {
+            _mainViewModel.Dashboard.RefreshGameInstallation(game);
         }
     }
 
