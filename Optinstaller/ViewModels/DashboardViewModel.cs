@@ -180,6 +180,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
                 scanSourceId: scannedGame.SourceId,
                 preferredExecutablePathHint: scannedGame.PreferredExecutablePath);
             if (game == null ||
+                !IsSupportedAutoScannedGame(game) ||
                 hiddenScannedGamePaths.Contains(game.GamePath) ||
                 !gamePaths.Add(game.GamePath))
             {
@@ -188,6 +189,17 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
             Games.Add(game);
         }
+    }
+
+    private bool IsSupportedAutoScannedGame(GameInstance game)
+    {
+        if (string.IsNullOrWhiteSpace(game.ExecutableName))
+        {
+            return false;
+        }
+
+        var executablePath = Path.Combine(game.GamePath, game.ExecutableName);
+        return _optiScalerService.IsSupportedExecutableArchitecture(executablePath);
     }
 
     private async Task RefreshVersions()

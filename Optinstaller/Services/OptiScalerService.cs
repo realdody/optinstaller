@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Text;
+using System.Text.Json;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using Optinstaller.Models;
@@ -19,6 +20,8 @@ public class OptiScalerService
     private const string OptiPatcherDownloadUrl = "https://github.com/optiscaler/OptiPatcher/releases/download/rolling/OptiPatcher.asi";
     private const string OptiPatcherRelativePath = "plugins\\OptiPatcher.asi";
     private const string FsrUpscalerDllName = "amd_fidelityfx_upscaler_dx12.dll";
+    private const string SpecialKDxgiMarkerName = "SpecialK.dxgi";
+    private const string ManagedLoaderInstallStateName = "Optinstaller.ManagedLoader.json";
 
     private static readonly string[] PossibleFilenames = 
     { 
@@ -28,12 +31,20 @@ public class OptiScalerService
 
     private static readonly string[] PreferredAlternativeFilenames =
     {
-        "winmm.dll", "version.dll", "dbghelp.dll", "wininet.dll", "winhttp.dll", "d3d12.dll", "OptiScaler.asi"
+        "winmm.dll", "version.dll", "dbghelp.dll", "wininet.dll", "winhttp.dll", "d3d12.dll"
     };
 
     private static readonly string[] AsiLoaderProbeFilenames =
     {
-        "dxgi.dll", "dinput8.dll", "winmm.dll", "version.dll", "d3d9.dll", "d3d11.dll", "d3d12.dll"
+        "dxgi.dll", "opengl32.dll", "d3d8.dll", "d3d9.dll", "d3d10.dll", "d3d11.dll", "d3d12.dll", "ddraw.dll",
+        "dinput.dll", "dinput8.dll", "dsound.dll", "msacm32.dll", "msvfw32.dll", "version.dll", "wininet.dll",
+        "winmm.dll", "winhttp.dll", "xlive.dll", "binkw32.dll", "bink2w32.dll", "binkw64.dll", "bink2w64.dll",
+        "vorbisFile.dll", "xinput1_1.dll", "xinput1_2.dll", "xinput1_3.dll", "xinput1_4.dll", "xinput9_1_0.dll", "xinputuap.dll"
+    };
+
+    private static readonly string[] SpecialKProbeFilenames =
+    {
+        "dxgi.dll", "d3d11.dll", "d3d9.dll", "opengl32.dll", "d3d8.dll", "ddraw.dll", "dinput8.dll"
     };
 
     public bool IsInstalled(string gamePath, out string installedFilename, out string detectedVersion, out string fsrVersion, out bool isOptiPatcherInstalled)
@@ -84,28 +95,29 @@ public class OptiScalerService
             return InstallTargetConflictInfo.None;
         }
 
-        var asiLoader = DetectAsiLoaderProvider(gamePath);
-        var path = Path.Combine(gamePath, targetFilename);
-        if (!File.Exists(path))
-        {
-            return new InstallTargetConflictInfo
-            {
-                TargetFilename = targetFilename,
-                AsiLoaderProvider = asiLoader,
-            };
-        }
-
         var existingModule = IdentifyExistingModule(gamePath, targetFilename);
+        var managedChain = BuildManagedChainRecommendation(gamePath, targetFilename, existingModule);
+        var asiLoader = existingModule.IsAsiLoader ? existingModule : DetectAsiLoaderIdentity(gamePath);
         return new InstallTargetConflictInfo
         {
             TargetFilename = targetFilename,
-            FileExists = true,
+            FileExists = !string.IsNullOrWhiteSpace(existingModule.ProviderName),
             IsOptiScaler = existingModule.IsOptiScaler,
             ExistingProvider = existingModule.ProviderName,
             ExistingDetails = existingModule.Details,
-            RecommendedFilename = GetRecommendedTargetFilename(gamePath, targetFilename, existingModule, asiLoader),
-            AsiLoaderProvider = asiLoader,
+            RecommendedFilename = GetRecommendedTargetFilename(gamePath, targetFilename, existingModule, asiLoader, managedChain),
+            AsiLoaderProvider = asiLoader.ProviderName,
+            AsiLoaderInstructions = asiLoader.AsiInstructions,
+            ChainedLoaderProvider = managedChain.ProviderName,
+            ChainedLoaderSourceFilename = managedChain.SourceFilename,
+            ChainedLoaderDestinationFilename = managedChain.RedirectedFilename,
+            ChainedLoaderInstructions = managedChain.Instructions,
         };
+    }
+
+    public bool IsSupportedExecutableArchitecture(string executablePath)
+    {
+        return TryIsPortableExecutable64Bit(executablePath) == true;
     }
 
     // Overload for backward compatibility
@@ -200,6 +212,12 @@ public class OptiScalerService
             var versionPath = options.VersionPath;
             var targetFilename = options.TargetFilename;
 
+            var managedLoaderState = PrepareManagedChainedLoader(options);
+            if (managedLoaderState != null)
+            {
+                SaveManagedLoaderInstallState(gamePath, managedLoaderState);
+            }
+
             // Use the shared method to copy the DLL
             UpdateDll(gamePath, versionPath, targetFilename);
 
@@ -221,7 +239,17 @@ public class OptiScalerService
                     content = content.Replace("Dxgi=auto", "Dxgi=false")
                                      .Replace("Dxgi=true", "Dxgi=false");
                 }
-                
+
+                if (string.Equals(options.ChainedLoaderProvider, "ReShade", StringComparison.OrdinalIgnoreCase))
+                {
+                    content = SetOrReplaceConfigValue(content, "LoadReshade", "true");
+                }
+
+                if (string.Equals(options.ChainedLoaderProvider, "Special K", StringComparison.OrdinalIgnoreCase))
+                {
+                    content = SetOrReplaceConfigValue(content, "LoadSpecialK", "true");
+                }
+                 
                 if (options.UseOptiPatcher)
                 {
                      content = content.Replace("LoadAsiPlugins=auto", "LoadAsiPlugins=true");
@@ -285,6 +313,7 @@ public class OptiScalerService
         sb.AppendLine("    if exist \"dlssg_to_fsr3_amd_is_better.dll\" del \"dlssg_to_fsr3_amd_is_better.dll\"");
         sb.AppendLine("    if exist \"dlssg_to_fsr3.log\" del \"dlssg_to_fsr3.log\"");
         sb.AppendLine($"    if exist \"{OptiPatcherRelativePath}\" del \"{OptiPatcherRelativePath}\"");
+        sb.AppendLine($"    if exist \"{ManagedLoaderInstallStateName}\" powershell -NoProfile -Command \"$state = Get-Content -LiteralPath '{ManagedLoaderInstallStateName}' | ConvertFrom-Json; if (-not (Test-Path -LiteralPath $state.OriginalFilename) -and (Test-Path -LiteralPath $state.RedirectedFilename)) {{ Move-Item -LiteralPath $state.RedirectedFilename -Destination $state.OriginalFilename }}; if ($state.CreatedSpecialKDxgiMarker -and (Test-Path -LiteralPath '{SpecialKDxgiMarkerName}')) {{ Remove-Item -LiteralPath '{SpecialKDxgiMarkerName}' -Force }}; Remove-Item -LiteralPath '{ManagedLoaderInstallStateName}' -Force\"");
         sb.AppendLine("    if exist \"plugins\" rmdir \"plugins\"");
         sb.AppendLine("    if exist \"D3D12_Optiscaler\" rmdir /s /q \"D3D12_Optiscaler\"");
         sb.AppendLine("    if exist \"DlssOverrides\" rmdir /s /q \"DlssOverrides\"");
@@ -351,6 +380,8 @@ public class OptiScalerService
     {
         await Task.Run(() =>
         {
+            var managedLoaderState = LoadManagedLoaderInstallState(gamePath);
+
             var filesToRemove = new List<string>
             {
                 OptiScalerLogName,
@@ -383,7 +414,192 @@ public class OptiScalerService
                 var path = Path.Combine(gamePath, dir);
                 if (Directory.Exists(path)) Directory.Delete(path, true);
             }
+
+            RestoreManagedChainedLoader(gamePath, managedLoaderState);
         });
+    }
+
+    private static ManagedLoaderInstallState? PrepareManagedChainedLoader(InstallationOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.ChainedLoaderProvider) ||
+            string.IsNullOrWhiteSpace(options.ChainedLoaderSourceFilename) ||
+            string.IsNullOrWhiteSpace(options.ChainedLoaderDestinationFilename))
+        {
+            return null;
+        }
+
+        var sourcePath = Path.Combine(options.GamePath, options.ChainedLoaderSourceFilename);
+        var redirectedPath = Path.Combine(options.GamePath, options.ChainedLoaderDestinationFilename);
+
+        if (File.Exists(sourcePath) && !sourcePath.Equals(redirectedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            if (File.Exists(redirectedPath))
+            {
+                throw new InvalidOperationException($"Cannot prepare {options.ChainedLoaderProvider}: {options.ChainedLoaderDestinationFilename} already exists.");
+            }
+
+            File.Move(sourcePath, redirectedPath);
+        }
+
+        var createdMarker = false;
+        if (options.CreateSpecialKDxgiMarker)
+        {
+            var markerPath = Path.Combine(options.GamePath, SpecialKDxgiMarkerName);
+            if (!File.Exists(markerPath))
+            {
+                File.WriteAllText(markerPath, string.Empty);
+                createdMarker = true;
+            }
+        }
+
+        return new ManagedLoaderInstallState
+        {
+            Provider = options.ChainedLoaderProvider,
+            OriginalFilename = options.ChainedLoaderSourceFilename,
+            RedirectedFilename = options.ChainedLoaderDestinationFilename,
+            CreatedSpecialKDxgiMarker = createdMarker,
+        };
+    }
+
+    private static void SaveManagedLoaderInstallState(string gamePath, ManagedLoaderInstallState state)
+    {
+        var statePath = Path.Combine(gamePath, ManagedLoaderInstallStateName);
+        var json = JsonSerializer.Serialize(state, OptiScalerServiceJsonContext.Default.ManagedLoaderInstallState);
+        File.WriteAllText(statePath, json);
+    }
+
+    private static ManagedLoaderInstallState? LoadManagedLoaderInstallState(string gamePath)
+    {
+        var statePath = Path.Combine(gamePath, ManagedLoaderInstallStateName);
+        if (!File.Exists(statePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(statePath);
+            return JsonSerializer.Deserialize(json, OptiScalerServiceJsonContext.Default.ManagedLoaderInstallState);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void RestoreManagedChainedLoader(string gamePath, ManagedLoaderInstallState? state)
+    {
+        var statePath = Path.Combine(gamePath, ManagedLoaderInstallStateName);
+        try
+        {
+            if (state == null)
+            {
+                if (File.Exists(statePath))
+                {
+                    File.Delete(statePath);
+                }
+
+                return;
+            }
+
+            var redirectedPath = Path.Combine(gamePath, state.RedirectedFilename);
+            var originalPath = Path.Combine(gamePath, state.OriginalFilename);
+            if (File.Exists(redirectedPath) && !File.Exists(originalPath))
+            {
+                File.Move(redirectedPath, originalPath);
+            }
+
+            if (state.CreatedSpecialKDxgiMarker)
+            {
+                var markerPath = Path.Combine(gamePath, SpecialKDxgiMarkerName);
+                if (File.Exists(markerPath))
+                {
+                    File.Delete(markerPath);
+                }
+            }
+        }
+        finally
+        {
+            if (File.Exists(statePath))
+            {
+                File.Delete(statePath);
+            }
+        }
+    }
+
+    private static string SetOrReplaceConfigValue(string content, string key, string value)
+    {
+        var pattern = $@"(?im)^\s*{Regex.Escape(key)}\s*=.*$";
+        if (Regex.IsMatch(content, pattern))
+        {
+            return Regex.Replace(content, pattern, $"{key}={value}");
+        }
+
+        var separator = content.EndsWith(Environment.NewLine, StringComparison.Ordinal) || string.IsNullOrEmpty(content)
+            ? string.Empty
+            : Environment.NewLine;
+        return content + separator + $"{key}={value}" + Environment.NewLine;
+    }
+
+    private static ManagedChainRecommendation BuildManagedChainRecommendation(string gamePath, string targetFilename, ExistingModuleIdentity existingModule)
+    {
+        if (!targetFilename.Equals("dxgi.dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return ManagedChainRecommendation.None;
+        }
+
+        if (existingModule.IsOptiScaler)
+        {
+            return ManagedChainRecommendation.None;
+        }
+
+        if (existingModule.CanBeChainedThroughOptiScaler)
+        {
+            return CreateManagedChainRecommendation(gamePath, existingModule);
+        }
+
+        if (!string.IsNullOrWhiteSpace(existingModule.ProviderName))
+        {
+            return ManagedChainRecommendation.None;
+        }
+
+        var specialK = DetectSpecialKIdentity(gamePath);
+        return specialK.CanBeChainedThroughOptiScaler
+            ? CreateManagedChainRecommendation(gamePath, specialK)
+            : ManagedChainRecommendation.None;
+    }
+
+    private static ManagedChainRecommendation CreateManagedChainRecommendation(string gamePath, ExistingModuleIdentity identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity.SourceFilename))
+        {
+            return ManagedChainRecommendation.None;
+        }
+
+        var sourcePath = Path.Combine(gamePath, identity.SourceFilename);
+        if (!File.Exists(sourcePath))
+        {
+            return ManagedChainRecommendation.None;
+        }
+
+        var redirectedFilename = GetManagedChainDestinationFilename(identity.ProviderName, sourcePath);
+        if (string.IsNullOrWhiteSpace(redirectedFilename))
+        {
+            return ManagedChainRecommendation.None;
+        }
+
+        if (!redirectedFilename.Equals(identity.SourceFilename, StringComparison.OrdinalIgnoreCase) &&
+            File.Exists(Path.Combine(gamePath, redirectedFilename)))
+        {
+            return ManagedChainRecommendation.None;
+        }
+
+        return new ManagedChainRecommendation(
+            identity.ProviderName,
+            identity.SourceFilename,
+            redirectedFilename,
+            BuildManagedChainInstructions(identity.ProviderName, redirectedFilename),
+            identity.ProviderName.Equals("Special K", StringComparison.OrdinalIgnoreCase));
     }
 
     private static ExistingModuleIdentity IdentifyExistingModule(string gamePath, string targetFilename)
@@ -397,7 +613,7 @@ public class OptiScalerService
         var metadata = ReadMetadataText(path, out var details);
         if (ContainsAny(metadata, "optiscaler"))
         {
-            return new ExistingModuleIdentity("OptiScaler", details, IsOptiScaler: true, IsAsiLoader: false);
+            return new ExistingModuleIdentity(targetFilename, "OptiScaler", details, IsOptiScaler: true, IsAsiLoader: false, CanBeChainedThroughOptiScaler: false);
         }
 
         if (ContainsAny(metadata, "reshade") ||
@@ -405,42 +621,51 @@ public class OptiScalerService
             File.Exists(Path.Combine(gamePath, "ReShade.log")) ||
             Directory.Exists(Path.Combine(gamePath, "reshade-shaders")))
         {
-            return new ExistingModuleIdentity("ReShade", details, IsOptiScaler: false, IsAsiLoader: false);
+            var canChain = targetFilename.Equals("dxgi.dll", StringComparison.OrdinalIgnoreCase);
+            return new ExistingModuleIdentity(targetFilename, "ReShade", details, IsOptiScaler: false, IsAsiLoader: false, CanBeChainedThroughOptiScaler: canChain);
         }
 
         if (ContainsAny(metadata, "dxvk", "vkd3d") ||
             File.Exists(Path.Combine(gamePath, "dxvk.conf")))
         {
-            return new ExistingModuleIdentity("DXVK", details, IsOptiScaler: false, IsAsiLoader: false);
+            return new ExistingModuleIdentity(targetFilename, "DXVK", details, IsOptiScaler: false, IsAsiLoader: false, CanBeChainedThroughOptiScaler: false);
         }
 
-        if (ContainsAny(metadata, "special k", "specialk" ) ||
+        if (ContainsAny(metadata, "special k", "specialk") ||
             File.Exists(Path.Combine(gamePath, "SpecialK.ini")) ||
-            File.Exists(Path.Combine(gamePath, "SpecialK.log")))
+            File.Exists(Path.Combine(gamePath, "SpecialK.log")) ||
+            File.Exists(Path.Combine(gamePath, "SpecialK.central")))
         {
-            return new ExistingModuleIdentity("Special K", details, IsOptiScaler: false, IsAsiLoader: false);
+            return new ExistingModuleIdentity(targetFilename, "Special K", details, IsOptiScaler: false, IsAsiLoader: false, CanBeChainedThroughOptiScaler: true);
         }
 
         if (ContainsAny(metadata, "ultimate asi loader", "universal asi loader", "asi loader", "ultimate asi") ||
             (Directory.Exists(Path.Combine(gamePath, "scripts")) && Path.GetFileName(path).Equals("dinput8.dll", StringComparison.OrdinalIgnoreCase)))
         {
-            return new ExistingModuleIdentity("Ultimate ASI Loader", details, IsOptiScaler: false, IsAsiLoader: true);
+            return new ExistingModuleIdentity(
+                targetFilename,
+                "Ultimate ASI Loader",
+                details,
+                IsOptiScaler: false,
+                IsAsiLoader: true,
+                CanBeChainedThroughOptiScaler: false,
+                AsiInstructions: "Keep the current loader in place and install OptiScaler.asi in the game folder. Ultimate ASI Loader should pick it up automatically.");
         }
 
-        if (ContainsAny(metadata, "enbseries", "enb" ) ||
+        if (ContainsAny(metadata, "enbseries", "enb") ||
             File.Exists(Path.Combine(gamePath, "enbseries.ini")))
         {
-            return new ExistingModuleIdentity("ENBSeries", details, IsOptiScaler: false, IsAsiLoader: false);
+            return new ExistingModuleIdentity(targetFilename, "ENBSeries", details, IsOptiScaler: false, IsAsiLoader: false, CanBeChainedThroughOptiScaler: false);
         }
 
-        return new ExistingModuleIdentity("another proxy DLL or mod loader", details, IsOptiScaler: false, IsAsiLoader: false);
+        return new ExistingModuleIdentity(targetFilename, "another proxy DLL or mod loader", details, IsOptiScaler: false, IsAsiLoader: false, CanBeChainedThroughOptiScaler: false);
     }
 
-    private static string DetectAsiLoaderProvider(string gamePath)
+    private static ExistingModuleIdentity DetectAsiLoaderIdentity(string gamePath)
     {
         if (!Directory.Exists(gamePath))
         {
-            return string.Empty;
+            return ExistingModuleIdentity.None;
         }
 
         foreach (var fileName in AsiLoaderProbeFilenames)
@@ -448,42 +673,137 @@ public class OptiScalerService
             var identity = IdentifyExistingModule(gamePath, fileName);
             if (identity.IsAsiLoader)
             {
-                return identity.ProviderName;
+                return identity;
             }
         }
 
-        return string.Empty;
+        return ExistingModuleIdentity.None;
     }
 
-    private static string GetRecommendedTargetFilename(string gamePath, string targetFilename, ExistingModuleIdentity existingModule, string asiLoader)
+    private static ExistingModuleIdentity DetectSpecialKIdentity(string gamePath)
     {
-        if (existingModule.IsAsiLoader &&
-            !File.Exists(Path.Combine(gamePath, "OptiScaler.asi")))
+        if (!Directory.Exists(gamePath))
         {
-            return "OptiScaler.asi";
+            return ExistingModuleIdentity.None;
         }
 
-        if (!string.IsNullOrWhiteSpace(asiLoader) &&
+        foreach (var fileName in SpecialKProbeFilenames)
+        {
+            var identity = IdentifyExistingModule(gamePath, fileName);
+            if (identity.ProviderName.Equals("Special K", StringComparison.OrdinalIgnoreCase))
+            {
+                return identity;
+            }
+        }
+
+        return ExistingModuleIdentity.None;
+    }
+
+    private static string GetRecommendedTargetFilename(string gamePath, string targetFilename, ExistingModuleIdentity existingModule, ExistingModuleIdentity asiLoader, ManagedChainRecommendation managedChain)
+    {
+        if (managedChain.IsValid)
+        {
+            return targetFilename;
+        }
+
+        if (asiLoader.IsAsiLoader &&
             !targetFilename.Equals("OptiScaler.asi", StringComparison.OrdinalIgnoreCase) &&
             !File.Exists(Path.Combine(gamePath, "OptiScaler.asi")))
         {
             return "OptiScaler.asi";
         }
 
-        foreach (var candidate in PreferredAlternativeFilenames)
+        if (!existingModule.IsOptiScaler && !string.IsNullOrWhiteSpace(existingModule.ProviderName))
         {
-            if (candidate.Equals(targetFilename, StringComparison.OrdinalIgnoreCase))
+            foreach (var candidate in PreferredAlternativeFilenames)
             {
-                continue;
-            }
+                if (candidate.Equals(targetFilename, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
 
-            if (!File.Exists(Path.Combine(gamePath, candidate)))
-            {
-                return candidate;
+                if (!File.Exists(Path.Combine(gamePath, candidate)))
+                {
+                    return candidate;
+                }
             }
         }
 
         return string.Empty;
+    }
+
+    private static string BuildManagedChainInstructions(string providerName, string redirectedFilename)
+    {
+        if (providerName.Equals("ReShade", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"OptiScaler can rename the current ReShade DLL to {redirectedFilename}, install itself as dxgi.dll, and set LoadReshade=true automatically.";
+        }
+
+        if (providerName.Equals("Special K", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"OptiScaler can rename the current Special K DLL to {redirectedFilename}, create an empty {SpecialKDxgiMarkerName} file, and set LoadSpecialK=true automatically.";
+        }
+
+        return string.Empty;
+    }
+
+    private static string GetManagedChainDestinationFilename(string providerName, string sourcePath)
+    {
+        var is64Bit = TryIsPortableExecutable64Bit(sourcePath);
+        if (is64Bit != true)
+        {
+            return string.Empty;
+        }
+
+        if (providerName.Equals("ReShade", StringComparison.OrdinalIgnoreCase))
+        {
+            return "ReShade64.dll";
+        }
+
+        if (providerName.Equals("Special K", StringComparison.OrdinalIgnoreCase))
+        {
+            return "SpecialK64.dll";
+        }
+
+        return string.Empty;
+    }
+
+    private static bool? TryIsPortableExecutable64Bit(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                return null;
+            }
+
+            using var stream = File.OpenRead(path);
+            using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: false);
+            if (reader.ReadUInt16() != 0x5A4D)
+            {
+                return null;
+            }
+
+            stream.Position = 0x3C;
+            var peOffset = reader.ReadInt32();
+            stream.Position = peOffset;
+            if (reader.ReadUInt32() != 0x00004550)
+            {
+                return null;
+            }
+
+            var machine = reader.ReadUInt16();
+            return machine switch
+            {
+                0x8664 or 0x0200 => true,
+                0x014c => false,
+                _ => null,
+            };
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string ReadMetadataText(string path, out string details)
@@ -516,8 +836,27 @@ public class OptiScalerService
         return tokens.Any(token => value.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
 
-    private sealed record ExistingModuleIdentity(string ProviderName, string Details, bool IsOptiScaler, bool IsAsiLoader)
+    private sealed record ExistingModuleIdentity(
+        string SourceFilename,
+        string ProviderName,
+        string Details,
+        bool IsOptiScaler,
+        bool IsAsiLoader,
+        bool CanBeChainedThroughOptiScaler,
+        string AsiInstructions = "")
     {
-        public static ExistingModuleIdentity None { get; } = new(string.Empty, string.Empty, false, false);
+        public static ExistingModuleIdentity None { get; } = new(string.Empty, string.Empty, string.Empty, false, false, false, string.Empty);
+    }
+
+    private sealed record ManagedChainRecommendation(
+        string ProviderName,
+        string SourceFilename,
+        string RedirectedFilename,
+        string Instructions,
+        bool CreateSpecialKDxgiMarker)
+    {
+        public static ManagedChainRecommendation None { get; } = new(string.Empty, string.Empty, string.Empty, string.Empty, false);
+
+        public bool IsValid => !string.IsNullOrWhiteSpace(ProviderName);
     }
 }

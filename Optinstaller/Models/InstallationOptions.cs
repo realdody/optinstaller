@@ -12,4 +12,8 @@ public class InstallationOptions
     public bool CreateUninstaller { get; set; } = true;
     public bool IsNvidia { get; set; }
     public bool IsWine { get; set; }
+    public string ChainedLoaderProvider { get; set; } = string.Empty;
+    public string ChainedLoaderSourceFilename { get; set; } = string.Empty;
+    public string ChainedLoaderDestinationFilename { get; set; } = string.Empty;
+    public bool CreateSpecialKDxgiMarker { get; set; }
 }

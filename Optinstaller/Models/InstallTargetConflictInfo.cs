@@ -18,6 +18,16 @@ public sealed class InstallTargetConflictInfo
 
     public string AsiLoaderProvider { get; init; } = string.Empty;
 
+    public string AsiLoaderInstructions { get; init; } = string.Empty;
+
+    public string ChainedLoaderProvider { get; init; } = string.Empty;
+
+    public string ChainedLoaderSourceFilename { get; init; } = string.Empty;
+
+    public string ChainedLoaderDestinationFilename { get; init; } = string.Empty;
+
+    public string ChainedLoaderInstructions { get; init; } = string.Empty;
+
     public bool RequiresAsiLoader => TargetFilename.Equals("OptiScaler.asi", System.StringComparison.OrdinalIgnoreCase);
 
     public bool HasRiskyConflict => FileExists && !IsOptiScaler;
@@ -25,4 +35,12 @@ public sealed class InstallTargetConflictInfo
     public bool HasRecommendedFilename => !string.IsNullOrWhiteSpace(RecommendedFilename);
 
     public bool HasDetectedAsiLoader => !string.IsNullOrWhiteSpace(AsiLoaderProvider);
+
+    public bool HasChainedLoaderRecommendation => !string.IsNullOrWhiteSpace(ChainedLoaderProvider);
+
+    public bool ShouldPreferAsiInstall =>
+        !HasChainedLoaderRecommendation &&
+        HasDetectedAsiLoader &&
+        RecommendedFilename.Equals("OptiScaler.asi", System.StringComparison.OrdinalIgnoreCase) &&
+        !TargetFilename.Equals("OptiScaler.asi", System.StringComparison.OrdinalIgnoreCase);
 }

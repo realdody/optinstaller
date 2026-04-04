@@ -24,6 +24,8 @@ public partial class InstallationWizardViewModel : ViewModelBase
     [ObservableProperty] private string _nextButtonText = "Next";
 
     [ObservableProperty] private bool _showEngineWarning;
+    [ObservableProperty] private bool _isSupportedArchitecture = true;
+    [ObservableProperty] private string _unsupportedArchitectureMessage = string.Empty;
     [ObservableProperty] private bool _isCheckingEnvironment;
     
     [ObservableProperty] private ObservableCollection<OptiScalerVersion> _availableVersions;
@@ -67,6 +69,12 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
     public event EventHandler? RequestClose;
 
+    private string GameExecutablePath => string.IsNullOrWhiteSpace(_gameExecutableName)
+        ? string.Empty
+        : Path.Combine(_options.GamePath, _gameExecutableName);
+
+    private readonly string _gameExecutableName;
+
     public InstallationWizardViewModel(GameInstance game, IEnumerable<OptiScalerVersion> availableVersions, OptiScalerVersion? defaultVersion = null)
     {
         if (availableVersions == null) throw new ArgumentNullException(nameof(availableVersions));
@@ -80,6 +88,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
             GamePath = game.GamePath,
             VersionPath = _selectedVersion?.LocalPath ?? string.Empty
         };
+        _gameExecutableName = game.ExecutableName;
 
         RefreshSelectedFilenameConflict();
 
@@ -96,6 +105,8 @@ public partial class InstallationWizardViewModel : ViewModelBase
             {
                 ShowEngineWarning = true;
             }
+
+            CheckExecutableArchitecture();
 
             // In .NET cross-platform, difficult to check registry easily without platform guards.
             // We'll assume Windows logic primarily as requested.
@@ -131,8 +142,11 @@ public partial class InstallationWizardViewModel : ViewModelBase
         _options.VersionPath = SelectedVersion.LocalPath;
         _options.TargetFilename = SelectedFilename;
         _options.EnableSpoofing = EnableSpoofing;
+        ApplySelectedFilenameInstallBehavior();
 
-        if (SelectedFilenameConflict.HasRiskyConflict)
+        EnsureSupportedArchitecture();
+
+        if (SelectedFilenameConflict.HasRiskyConflict && !SelectedFilenameConflict.HasChainedLoaderRecommendation)
         {
             throw new InvalidOperationException(BuildConflictInstallMessage(SelectedFilenameConflict));
         }
@@ -238,6 +252,8 @@ public partial class InstallationWizardViewModel : ViewModelBase
     {
         if (IsInstalling) return;
 
+        EnsureSupportedArchitecture();
+
         if (StepIndex == 0 && ShowEngineWarning)
         {
         }
@@ -250,12 +266,13 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
         if (StepIndex == 2)
         {
-            if (SelectedFilenameConflict.HasRiskyConflict && !FileExistsWarning)
+            if (SelectedFilenameConflict.HasRiskyConflict && !SelectedFilenameConflict.HasChainedLoaderRecommendation && !FileExistsWarning)
             {
                 FileExistsWarning = true;
                 return;
             }
             _options.TargetFilename = SelectedFilename;
+            ApplySelectedFilenameInstallBehavior();
         }
 
         if (StepIndex == 3)
@@ -325,6 +342,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
     private void UpdateState()
     {
         CanGoBack = StepIndex > 0 && !IsInstalling && !InstallSuccess;
+        CanGoNext = !IsInstalling && IsSupportedArchitecture;
         
         OnPropertyChanged(nameof(IsStep0));
         OnPropertyChanged(nameof(IsStep1));
@@ -362,6 +380,34 @@ public partial class InstallationWizardViewModel : ViewModelBase
                 CanGoBack = false;
                 CanGoNext = false;
                 break;
+        }
+    }
+
+    private void CheckExecutableArchitecture()
+    {
+        if (string.IsNullOrWhiteSpace(GameExecutablePath) || !File.Exists(GameExecutablePath))
+        {
+            IsSupportedArchitecture = true;
+            UnsupportedArchitectureMessage = string.Empty;
+            return;
+        }
+
+        if (_optiScalerService.IsSupportedExecutableArchitecture(GameExecutablePath))
+        {
+            IsSupportedArchitecture = true;
+            UnsupportedArchitectureMessage = string.Empty;
+            return;
+        }
+
+        IsSupportedArchitecture = false;
+        UnsupportedArchitectureMessage = $"{Path.GetFileName(GameExecutablePath)} appears to be 32-bit. OptiScaler only supports 64-bit games, so installation is blocked.";
+    }
+
+    private void EnsureSupportedArchitecture()
+    {
+        if (!IsSupportedArchitecture)
+        {
+            throw new InvalidOperationException(UnsupportedArchitectureMessage);
         }
     }
 
@@ -431,8 +477,31 @@ public partial class InstallationWizardViewModel : ViewModelBase
         SelectedFilenameConflict = _optiScalerService.AnalyzeTargetFilename(_options.GamePath, SelectedFilename);
     }
 
+    private void ApplySelectedFilenameInstallBehavior()
+    {
+        _options.ChainedLoaderProvider = string.Empty;
+        _options.ChainedLoaderSourceFilename = string.Empty;
+        _options.ChainedLoaderDestinationFilename = string.Empty;
+        _options.CreateSpecialKDxgiMarker = false;
+
+        if (!SelectedFilenameConflict.HasChainedLoaderRecommendation)
+        {
+            return;
+        }
+
+        _options.ChainedLoaderProvider = SelectedFilenameConflict.ChainedLoaderProvider;
+        _options.ChainedLoaderSourceFilename = SelectedFilenameConflict.ChainedLoaderSourceFilename;
+        _options.ChainedLoaderDestinationFilename = SelectedFilenameConflict.ChainedLoaderDestinationFilename;
+        _options.CreateSpecialKDxgiMarker = SelectedFilenameConflict.ChainedLoaderProvider.Equals("Special K", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string BuildConflictInstallMessage(InstallTargetConflictInfo conflict)
     {
+        if (conflict.HasChainedLoaderRecommendation)
+        {
+            return conflict.ChainedLoaderInstructions;
+        }
+
         var details = string.IsNullOrWhiteSpace(conflict.ExistingDetails)
             ? conflict.ExistingProvider
             : $"{conflict.ExistingProvider} ({conflict.ExistingDetails})";
@@ -441,7 +510,10 @@ public partial class InstallationWizardViewModel : ViewModelBase
         {
             if (conflict.RecommendedFilename.Equals("OptiScaler.asi", StringComparison.OrdinalIgnoreCase) && conflict.HasDetectedAsiLoader)
             {
-                return $"{conflict.TargetFilename} is already used by {details}. Keep that loader in place and install OptiScaler as OptiScaler.asi instead; {conflict.AsiLoaderProvider} should load it automatically.";
+                var instructions = string.IsNullOrWhiteSpace(conflict.AsiLoaderInstructions)
+                    ? string.Empty
+                    : $" {conflict.AsiLoaderInstructions}";
+                return $"{conflict.TargetFilename} is already used by {details}. Keep that loader in place and install OptiScaler as OptiScaler.asi instead.{instructions}";
             }
 
             return $"{conflict.TargetFilename} is already used by {details}. Choose {conflict.RecommendedFilename} instead of overwriting it.";

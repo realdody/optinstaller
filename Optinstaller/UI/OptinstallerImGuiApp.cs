@@ -2917,7 +2917,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             }
 
             ImGui.SameLine();
-            ImGui.BeginDisabled(wizard.IsInstalling);
+            ImGui.BeginDisabled(wizard.IsInstalling || !wizard.CanGoNext);
             if (ImGui.Button(wizard.NextButtonText, new Vector2(120f, 0f)))
             {
                 StartUiTask(() => wizard.Next(), "The installation wizard failed");
@@ -2962,6 +2962,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             case 0:
                 ImGui.TextWrapped("This wizard configures and installs OptiScaler into the selected game folder.");
+                if (!wizard.IsSupportedArchitecture)
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(ErrorColor, wizard.UnsupportedArchitectureMessage);
+                }
                 if (wizard.ShowEngineWarning)
                 {
                     ImGui.Spacing();
@@ -2999,14 +3004,17 @@ public sealed class OptinstallerImGuiApp : IDisposable
                         TextMuted(conflict.ExistingDetails);
                     }
 
-                    if (conflict.HasRecommendedFilename)
+                    if (conflict.HasChainedLoaderRecommendation)
                     {
-                        var recommendation = conflict.RecommendedFilename.Equals("OptiScaler.asi", StringComparison.OrdinalIgnoreCase) && conflict.HasDetectedAsiLoader
-                            ? $"Recommended: keep the existing loader and install OptiScaler as {conflict.RecommendedFilename}. {conflict.AsiLoaderProvider} should load it automatically."
-                            : $"Recommended: install OptiScaler as {conflict.RecommendedFilename} instead of overwriting {wizard.SelectedFilename}.";
+                        TextMuted(conflict.ChainedLoaderInstructions);
+                    }
+                    else if (conflict.HasRecommendedFilename)
+                    {
+                        var recommendation = BuildWizardFilenameRecommendation(conflict, wizard.SelectedFilename);
                         TextMuted(recommendation);
 
-                        if (ImGui.Button($"Use {conflict.RecommendedFilename}", new Vector2(180f, 0f)))
+                        var buttonWidth = GetButtonWidth($"Use {conflict.RecommendedFilename}", 180f);
+                        if (ImGui.Button($"Use {conflict.RecommendedFilename}", new Vector2(buttonWidth, 0f)))
                         {
                             wizard.UseRecommendedFilename();
                         }
@@ -3018,12 +3026,33 @@ public sealed class OptinstallerImGuiApp : IDisposable
                         ImGui.TextColored(ErrorColor, "Click Next again only if you intentionally want to overwrite the existing file.");
                     }
                 }
+                else if (conflict.HasChainedLoaderRecommendation)
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(InfoColor, $"Detected {conflict.ChainedLoaderProvider}. {wizard.SelectedFilename} can stay selected and OptiScaler can manage the hand-off automatically.");
+                    TextMuted(conflict.ChainedLoaderInstructions);
+                }
+                else if (conflict.ShouldPreferAsiInstall)
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(InfoColor, $"Detected {conflict.AsiLoaderProvider}. Using OptiScaler.asi is safer than installing a second proxy DLL.");
+                    TextMuted(BuildWizardFilenameRecommendation(conflict, wizard.SelectedFilename));
+                    var buttonWidth = GetButtonWidth("Use OptiScaler.asi", 180f);
+                    if (ImGui.Button("Use OptiScaler.asi", new Vector2(buttonWidth, 0f)))
+                    {
+                        wizard.UseRecommendedFilename();
+                    }
+                }
                 else if (conflict.RequiresAsiLoader)
                 {
                     ImGui.Spacing();
                     if (conflict.HasDetectedAsiLoader)
                     {
-                        ImGui.TextColored(SuccessColor, $"Detected {conflict.AsiLoaderProvider}. OptiScaler.asi should be loadable without replacing the current proxy DLL.");
+                        ImGui.TextColored(SuccessColor, $"Detected {conflict.AsiLoaderProvider}. OptiScaler.asi can be used without replacing the current proxy DLL.");
+                        if (!string.IsNullOrWhiteSpace(conflict.AsiLoaderInstructions))
+                        {
+                            TextMuted(conflict.AsiLoaderInstructions);
+                        }
                     }
                     else
                     {
@@ -3192,6 +3221,39 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private bool TryHandleQuickInstallConflict(GameInstance game, InstallationWizardViewModel wizard)
     {
         var conflict = wizard.SelectedFilenameConflict;
+        if (conflict.HasChainedLoaderRecommendation)
+        {
+            QueueConfirmation(
+                ConfirmationHost.MainWindow,
+                $"{conflict.ChainedLoaderProvider} detected",
+                BuildQuickInstallManagedChainMessage(conflict),
+                $"Install + load {conflict.ChainedLoaderProvider}",
+                async () =>
+                {
+                    await RunQuickInstallAsync(game, wizard);
+                },
+                $"Installed OptiScaler for {game.Name} and configured {conflict.ChainedLoaderProvider} chaining.");
+
+            return true;
+        }
+
+        if (conflict.ShouldPreferAsiInstall)
+        {
+            QueueConfirmation(
+                ConfirmationHost.MainWindow,
+                $"{conflict.AsiLoaderProvider} detected",
+                BuildQuickInstallAsiRecommendationMessage(conflict),
+                "Use OptiScaler.asi",
+                async () =>
+                {
+                    wizard.SelectedFilename = "OptiScaler.asi";
+                    await RunQuickInstallAsync(game, wizard);
+                },
+                $"Installed OptiScaler for {game.Name} using OptiScaler.asi.");
+
+            return true;
+        }
+
         if (conflict.HasRiskyConflict)
         {
             if (conflict.HasRecommendedFilename)
@@ -3256,13 +3318,47 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             if (conflict.RecommendedFilename.Equals("OptiScaler.asi", StringComparison.OrdinalIgnoreCase) && conflict.HasDetectedAsiLoader)
             {
-                return $"{conflict.TargetFilename} is already used by {details}. Use {conflict.RecommendedFilename} instead and keep the existing loader in place. {conflict.AsiLoaderProvider} should load it automatically.";
+                var instructions = string.IsNullOrWhiteSpace(conflict.AsiLoaderInstructions)
+                    ? string.Empty
+                    : $" {conflict.AsiLoaderInstructions}";
+                return $"{conflict.TargetFilename} is already used by {details}. Use {conflict.RecommendedFilename} instead and keep the existing loader in place.{instructions}";
             }
 
             return $"{conflict.TargetFilename} is already used by {details}. Use {conflict.RecommendedFilename} for this install, or open the full installer if you want to choose another target manually.";
         }
 
         return $"{conflict.TargetFilename} is already used by {details}. Open the full installer to pick another target or intentionally overwrite it.";
+    }
+
+    private static string BuildQuickInstallManagedChainMessage(InstallTargetConflictInfo conflict)
+    {
+        return string.IsNullOrWhiteSpace(conflict.ChainedLoaderInstructions)
+            ? $"{conflict.ChainedLoaderProvider} was detected. OptiScaler can keep using {conflict.TargetFilename} and manage the loader hand-off automatically."
+            : conflict.ChainedLoaderInstructions;
+    }
+
+    private static string BuildQuickInstallAsiRecommendationMessage(InstallTargetConflictInfo conflict)
+    {
+        return string.IsNullOrWhiteSpace(conflict.AsiLoaderInstructions)
+            ? $"{conflict.AsiLoaderProvider} was detected in the game folder. Using OptiScaler.asi is safer than installing a second proxy DLL."
+            : $"{conflict.AsiLoaderProvider} was detected in the game folder. Use OptiScaler.asi instead. {conflict.AsiLoaderInstructions}";
+    }
+
+    private static string BuildWizardFilenameRecommendation(InstallTargetConflictInfo conflict, string currentFilename)
+    {
+        if (conflict.HasChainedLoaderRecommendation)
+        {
+            return conflict.ChainedLoaderInstructions;
+        }
+
+        if (conflict.ShouldPreferAsiInstall)
+        {
+            return string.IsNullOrWhiteSpace(conflict.AsiLoaderInstructions)
+                ? $"Recommended: use OptiScaler.asi instead of {currentFilename} so the existing {conflict.AsiLoaderProvider} install stays in charge of DLL loading."
+                : $"Recommended: use OptiScaler.asi instead of {currentFilename}. {conflict.AsiLoaderInstructions}";
+        }
+
+        return $"Recommended: install OptiScaler as {conflict.RecommendedFilename} instead of overwriting {currentFilename}.";
     }
 
     private async Task RunQuickInstallAsync(GameInstance game, InstallationWizardViewModel wizard)
