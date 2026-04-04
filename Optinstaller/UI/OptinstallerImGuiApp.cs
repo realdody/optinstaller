@@ -2994,10 +2994,52 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 var selectedFilename = wizard.SelectedFilename;
                 DrawStringCombo("Target filename", wizard.Filenames, ref selectedFilename);
                 wizard.SelectedFilename = selectedFilename;
-                if (wizard.FileExistsWarning)
+
+                var conflict = wizard.SelectedFilenameConflict;
+                if (conflict.IsOptiScaler)
                 {
                     ImGui.Spacing();
-                    ImGui.TextColored(ErrorColor, "A file with that name already exists. Click Next again to overwrite it.");
+                    ImGui.TextColored(SuccessColor, $"{wizard.SelectedFilename} already belongs to OptiScaler and will be updated in place.");
+                }
+                else if (conflict.HasRiskyConflict)
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(WarningColor, $"{wizard.SelectedFilename} is already used by {conflict.ExistingProvider}.");
+                    if (!string.IsNullOrWhiteSpace(conflict.ExistingDetails))
+                    {
+                        TextMuted(conflict.ExistingDetails);
+                    }
+
+                    if (conflict.HasRecommendedFilename)
+                    {
+                        var recommendation = conflict.RecommendedFilename.Equals("OptiScaler.asi", StringComparison.OrdinalIgnoreCase) && conflict.HasDetectedAsiLoader
+                            ? $"Recommended: keep the existing loader and install OptiScaler as {conflict.RecommendedFilename}. {conflict.AsiLoaderProvider} should load it automatically."
+                            : $"Recommended: install OptiScaler as {conflict.RecommendedFilename} instead of overwriting {wizard.SelectedFilename}.";
+                        TextMuted(recommendation);
+
+                        if (ImGui.Button($"Use {conflict.RecommendedFilename}", new Vector2(180f, 0f)))
+                        {
+                            wizard.UseRecommendedFilename();
+                        }
+                    }
+
+                    if (wizard.FileExistsWarning)
+                    {
+                        ImGui.Spacing();
+                        ImGui.TextColored(ErrorColor, "Click Next again only if you intentionally want to overwrite the existing file.");
+                    }
+                }
+                else if (conflict.RequiresAsiLoader)
+                {
+                    ImGui.Spacing();
+                    if (conflict.HasDetectedAsiLoader)
+                    {
+                        ImGui.TextColored(SuccessColor, $"Detected {conflict.AsiLoaderProvider}. OptiScaler.asi should be loadable without replacing the current proxy DLL.");
+                    }
+                    else
+                    {
+                        ImGui.TextColored(WarningColor, "OptiScaler.asi needs an existing ASI loader in the game folder. None was detected automatically.");
+                    }
                 }
                 break;
 

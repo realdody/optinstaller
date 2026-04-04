@@ -31,6 +31,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
     [ObservableProperty] private string _selectedFilename = "dxgi.dll";
     [ObservableProperty] private bool _fileExistsWarning;
+    [ObservableProperty] private InstallTargetConflictInfo _selectedFilenameConflict = InstallTargetConflictInfo.None;
     
     [ObservableProperty] private bool _isNvidia;
     [ObservableProperty] private bool _enableSpoofing = true;
@@ -80,6 +81,8 @@ public partial class InstallationWizardViewModel : ViewModelBase
             VersionPath = _selectedVersion?.LocalPath ?? string.Empty
         };
 
+        RefreshSelectedFilenameConflict();
+
         _initializationTask = InitializeAsync();
     }
 
@@ -128,6 +131,16 @@ public partial class InstallationWizardViewModel : ViewModelBase
         _options.VersionPath = SelectedVersion.LocalPath;
         _options.TargetFilename = SelectedFilename;
         _options.EnableSpoofing = EnableSpoofing;
+
+        if (SelectedFilenameConflict.HasRiskyConflict)
+        {
+            throw new InvalidOperationException(BuildConflictInstallMessage(SelectedFilenameConflict));
+        }
+
+        if (SelectedFilenameConflict.RequiresAsiLoader && !SelectedFilenameConflict.HasDetectedAsiLoader)
+        {
+            throw new InvalidOperationException("OptiScaler.asi needs an existing ASI loader in the game folder. Open the full install wizard and choose another target filename unless you already know one is present.");
+        }
 
         if (IsNvidia)
         {
@@ -237,8 +250,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
 
         if (StepIndex == 2)
         {
-            var path = Path.Combine(_options.GamePath, SelectedFilename);
-            if (File.Exists(path) && !FileExistsWarning)
+            if (SelectedFilenameConflict.HasRiskyConflict && !FileExistsWarning)
             {
                 FileExistsWarning = true;
                 return;
@@ -396,5 +408,45 @@ public partial class InstallationWizardViewModel : ViewModelBase
         {
             InstallStatus = $"Error: {ex.Message}";
         }
+    }
+
+    partial void OnSelectedFilenameChanged(string value)
+    {
+        FileExistsWarning = false;
+        RefreshSelectedFilenameConflict();
+    }
+
+    public void UseRecommendedFilename()
+    {
+        if (!SelectedFilenameConflict.HasRecommendedFilename)
+        {
+            return;
+        }
+
+        SelectedFilename = SelectedFilenameConflict.RecommendedFilename;
+    }
+
+    private void RefreshSelectedFilenameConflict()
+    {
+        SelectedFilenameConflict = _optiScalerService.AnalyzeTargetFilename(_options.GamePath, SelectedFilename);
+    }
+
+    private static string BuildConflictInstallMessage(InstallTargetConflictInfo conflict)
+    {
+        var details = string.IsNullOrWhiteSpace(conflict.ExistingDetails)
+            ? conflict.ExistingProvider
+            : $"{conflict.ExistingProvider} ({conflict.ExistingDetails})";
+
+        if (conflict.HasRecommendedFilename)
+        {
+            if (conflict.RecommendedFilename.Equals("OptiScaler.asi", StringComparison.OrdinalIgnoreCase) && conflict.HasDetectedAsiLoader)
+            {
+                return $"{conflict.TargetFilename} is already used by {details}. Keep that loader in place and install OptiScaler as OptiScaler.asi instead; {conflict.AsiLoaderProvider} should load it automatically.";
+            }
+
+            return $"{conflict.TargetFilename} is already used by {details}. Choose {conflict.RecommendedFilename} instead of overwriting it.";
+        }
+
+        return $"{conflict.TargetFilename} is already used by {details}. Open the full install wizard if you intentionally want to overwrite it.";
     }
 }

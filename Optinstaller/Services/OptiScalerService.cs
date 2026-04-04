@@ -26,6 +26,16 @@ public class OptiScalerService
         "d3d12.dll", "wininet.dll", "winhttp.dll", "OptiScaler.asi" 
     };
 
+    private static readonly string[] PreferredAlternativeFilenames =
+    {
+        "winmm.dll", "version.dll", "dbghelp.dll", "wininet.dll", "winhttp.dll", "d3d12.dll", "OptiScaler.asi"
+    };
+
+    private static readonly string[] AsiLoaderProbeFilenames =
+    {
+        "dxgi.dll", "dinput8.dll", "winmm.dll", "version.dll", "d3d9.dll", "d3d11.dll", "d3d12.dll"
+    };
+
     public bool IsInstalled(string gamePath, out string installedFilename, out string detectedVersion, out string fsrVersion, out bool isOptiPatcherInstalled)
     {
         installedFilename = string.Empty;
@@ -63,6 +73,39 @@ public class OptiScalerService
         }
         
         return false;
+    }
+
+    public InstallTargetConflictInfo AnalyzeTargetFilename(string gamePath, string targetFilename)
+    {
+        if (string.IsNullOrWhiteSpace(gamePath) ||
+            string.IsNullOrWhiteSpace(targetFilename) ||
+            !Directory.Exists(gamePath))
+        {
+            return InstallTargetConflictInfo.None;
+        }
+
+        var asiLoader = DetectAsiLoaderProvider(gamePath);
+        var path = Path.Combine(gamePath, targetFilename);
+        if (!File.Exists(path))
+        {
+            return new InstallTargetConflictInfo
+            {
+                TargetFilename = targetFilename,
+                AsiLoaderProvider = asiLoader,
+            };
+        }
+
+        var existingModule = IdentifyExistingModule(gamePath, targetFilename);
+        return new InstallTargetConflictInfo
+        {
+            TargetFilename = targetFilename,
+            FileExists = true,
+            IsOptiScaler = existingModule.IsOptiScaler,
+            ExistingProvider = existingModule.ProviderName,
+            ExistingDetails = existingModule.Details,
+            RecommendedFilename = GetRecommendedTargetFilename(gamePath, targetFilename, existingModule, asiLoader),
+            AsiLoaderProvider = asiLoader,
+        };
     }
 
     // Overload for backward compatibility
@@ -341,5 +384,140 @@ public class OptiScalerService
                 if (Directory.Exists(path)) Directory.Delete(path, true);
             }
         });
+    }
+
+    private static ExistingModuleIdentity IdentifyExistingModule(string gamePath, string targetFilename)
+    {
+        var path = Path.Combine(gamePath, targetFilename);
+        if (!File.Exists(path))
+        {
+            return ExistingModuleIdentity.None;
+        }
+
+        var metadata = ReadMetadataText(path, out var details);
+        if (ContainsAny(metadata, "optiscaler"))
+        {
+            return new ExistingModuleIdentity("OptiScaler", details, IsOptiScaler: true, IsAsiLoader: false);
+        }
+
+        if (ContainsAny(metadata, "reshade") ||
+            File.Exists(Path.Combine(gamePath, "ReShade.ini")) ||
+            File.Exists(Path.Combine(gamePath, "ReShade.log")) ||
+            Directory.Exists(Path.Combine(gamePath, "reshade-shaders")))
+        {
+            return new ExistingModuleIdentity("ReShade", details, IsOptiScaler: false, IsAsiLoader: false);
+        }
+
+        if (ContainsAny(metadata, "dxvk", "vkd3d") ||
+            File.Exists(Path.Combine(gamePath, "dxvk.conf")))
+        {
+            return new ExistingModuleIdentity("DXVK", details, IsOptiScaler: false, IsAsiLoader: false);
+        }
+
+        if (ContainsAny(metadata, "special k", "specialk" ) ||
+            File.Exists(Path.Combine(gamePath, "SpecialK.ini")) ||
+            File.Exists(Path.Combine(gamePath, "SpecialK.log")))
+        {
+            return new ExistingModuleIdentity("Special K", details, IsOptiScaler: false, IsAsiLoader: false);
+        }
+
+        if (ContainsAny(metadata, "ultimate asi loader", "universal asi loader", "asi loader", "ultimate asi") ||
+            (Directory.Exists(Path.Combine(gamePath, "scripts")) && Path.GetFileName(path).Equals("dinput8.dll", StringComparison.OrdinalIgnoreCase)))
+        {
+            return new ExistingModuleIdentity("Ultimate ASI Loader", details, IsOptiScaler: false, IsAsiLoader: true);
+        }
+
+        if (ContainsAny(metadata, "enbseries", "enb" ) ||
+            File.Exists(Path.Combine(gamePath, "enbseries.ini")))
+        {
+            return new ExistingModuleIdentity("ENBSeries", details, IsOptiScaler: false, IsAsiLoader: false);
+        }
+
+        return new ExistingModuleIdentity("another proxy DLL or mod loader", details, IsOptiScaler: false, IsAsiLoader: false);
+    }
+
+    private static string DetectAsiLoaderProvider(string gamePath)
+    {
+        if (!Directory.Exists(gamePath))
+        {
+            return string.Empty;
+        }
+
+        foreach (var fileName in AsiLoaderProbeFilenames)
+        {
+            var identity = IdentifyExistingModule(gamePath, fileName);
+            if (identity.IsAsiLoader)
+            {
+                return identity.ProviderName;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string GetRecommendedTargetFilename(string gamePath, string targetFilename, ExistingModuleIdentity existingModule, string asiLoader)
+    {
+        if (existingModule.IsAsiLoader &&
+            !File.Exists(Path.Combine(gamePath, "OptiScaler.asi")))
+        {
+            return "OptiScaler.asi";
+        }
+
+        if (!string.IsNullOrWhiteSpace(asiLoader) &&
+            !targetFilename.Equals("OptiScaler.asi", StringComparison.OrdinalIgnoreCase) &&
+            !File.Exists(Path.Combine(gamePath, "OptiScaler.asi")))
+        {
+            return "OptiScaler.asi";
+        }
+
+        foreach (var candidate in PreferredAlternativeFilenames)
+        {
+            if (candidate.Equals(targetFilename, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!File.Exists(Path.Combine(gamePath, candidate)))
+            {
+                return candidate;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ReadMetadataText(string path, out string details)
+    {
+        details = string.Empty;
+
+        try
+        {
+            var info = FileVersionInfo.GetVersionInfo(path);
+            details = FirstNonEmpty(info.ProductName, info.FileDescription, info.OriginalFilename, info.InternalName, info.CompanyName);
+            return string.Join(
+                    "\n",
+                    new[] { info.ProductName, info.FileDescription, info.OriginalFilename, info.InternalName, info.CompanyName }
+                        .Where(value => !string.IsNullOrWhiteSpace(value)))
+                .ToLowerInvariant();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+    }
+
+    private static bool ContainsAny(string value, params string[] tokens)
+    {
+        return tokens.Any(token => value.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed record ExistingModuleIdentity(string ProviderName, string Details, bool IsOptiScaler, bool IsAsiLoader)
+    {
+        public static ExistingModuleIdentity None { get; } = new(string.Empty, string.Empty, false, false);
     }
 }
