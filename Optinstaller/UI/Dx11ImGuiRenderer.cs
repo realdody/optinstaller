@@ -194,6 +194,53 @@ float4 main(PS_INPUT input) : SV_Target
         CreateRenderTarget();
     }
 
+    public unsafe nint CreateTexture(ReadOnlySpan<byte> rgbaPixels, int width, int height)
+    {
+        if (_disposed || _device == null || width <= 0 || height <= 0)
+        {
+            return 0;
+        }
+
+        var expectedByteCount = width * height * 4;
+        if (rgbaPixels.Length < expectedByteCount)
+        {
+            return 0;
+        }
+
+        fixed (byte* pixels = rgbaPixels)
+        {
+            var textureDescription = new Texture2DDescription
+            {
+                Width = (uint)width,
+                Height = (uint)height,
+                ArraySize = 1,
+                MipLevels = 1,
+                Format = Format.R8G8B8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.ShaderResource,
+            };
+
+            var subresource = new SubresourceData((nint)pixels, (uint)(width * 4), 0);
+            using var texture = _device.CreateTexture2D(textureDescription, subresource);
+            var shaderResourceView = _device.CreateShaderResourceView(texture, null);
+            return RegisterTexture(shaderResourceView);
+        }
+    }
+
+    public void ReleaseTexture(nint textureId)
+    {
+        if (textureId == 0 || textureId == _fontTextureId)
+        {
+            return;
+        }
+
+        if (_textures.Remove(textureId, out var texture))
+        {
+            texture.Dispose();
+        }
+    }
+
     public bool HandleMessage(uint msg, nuint wParam, nint lParam)
     {
         if (!SetCurrentContext())

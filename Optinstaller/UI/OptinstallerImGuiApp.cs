@@ -23,6 +23,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private const int MinMainClientHeight = 720;
     private const int MinGameDetailsClientWidth = 840;
     private const int MinGameDetailsClientHeight = 760;
+    private const float DashboardGameIconSize = 28f;
+    private const int DashboardGameIconTextureSize = 32;
+    private const float DashboardGameIconSpacing = 12f;
     private const string ConfirmationPopupIdPrefix = "ConfirmationPrompt##";
     private const ImGuiWindowFlags PanelWindowFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
     private const ImGuiWindowFlags ScrollablePanelWindowFlags = ImGuiWindowFlags.None;
@@ -206,6 +209,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private string? _selectedGamePath;
     private string? _selectedVersionTag;
     private readonly Dictionary<string, float> _animationValues = new();
+    private readonly Dictionary<string, nint> _gameExecutableIconTextureIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _bulkSelectedGamePaths = new(StringComparer.OrdinalIgnoreCase);
     private float _uiTime;
 
@@ -350,6 +354,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         _disposed = true;
         DisposeNativeWindows();
+        ReleaseGameExecutableIconTextures();
         _renderer?.Dispose();
 
         if (_hwnd != IntPtr.Zero)
@@ -4254,13 +4259,16 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var actionsWidth = uninstallWidth + actionSpacing + detailsWidth;
         var checkboxSize = ImGui.GetFrameHeight();
         var checkboxAreaWidth = checkboxSize + 12f;
+        var iconTextureId = GetGameExecutableIconTextureId(game);
+        var hasIcon = iconTextureId != 0;
+        var iconAreaWidth = hasIcon ? DashboardGameIconSize + DashboardGameIconSpacing : 0f;
 
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
         var min = ImGui.GetCursorScreenPos();
         var availableWidth = MathF.Max(0f, ImGui.GetContentRegionAvail().X - 6f);
         var lineHeight = ImGui.GetTextLineHeight();
         var buttonHeight = ImGui.GetFrameHeight();
-        var contentLeft = min.X + 16f + checkboxAreaWidth;
+        var contentLeft = min.X + 16f + checkboxAreaWidth + iconAreaWidth;
         var contentRight = min.X + MathF.Max(1f, availableWidth - actionsWidth - 32f);
         var pillsWidth = MathF.Max(1f, contentRight - contentLeft);
         var pillsHeight = MeasureInstalledGamePillsHeight(game, pillsWidth);
@@ -4332,6 +4340,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var displayedName = TrimTextToWidth(game.Name, textMaxWidth);
         var displayedDetail = TrimTextToWidth(detail, textMaxWidth);
 
+        if (hasIcon)
+        {
+            var iconMin = new Vector2(min.X + 16f + checkboxAreaWidth, textStartY + MathF.Max(0f, ((lineHeight * 2f) + 3f - DashboardGameIconSize) * 0.5f));
+            var iconMax = iconMin + new Vector2(DashboardGameIconSize, DashboardGameIconSize);
+            drawList.AddImage(iconTextureId, iconMin, iconMax);
+        }
+
         drawList.AddText(new Vector2(contentLeft, textStartY), textColor, displayedName);
         drawList.AddText(new Vector2(contentLeft, detailY), detailColor, displayedDetail);
         var pillLayouts = DrawInstalledGamePills(drawList, pillsOrigin, pillsWidth, game);
@@ -4397,6 +4412,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var actionsWidth = installWidth + actionSpacing + detailsWidth;
         var checkboxSize = ImGui.GetFrameHeight();
         var checkboxAreaWidth = checkboxSize + 12f;
+        var iconTextureId = GetGameExecutableIconTextureId(game);
+        var hasIcon = iconTextureId != 0;
+        var iconAreaWidth = hasIcon ? DashboardGameIconSize + DashboardGameIconSpacing : 0f;
 
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
         var min = ImGui.GetCursorScreenPos();
@@ -4457,10 +4475,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         var contentHeight = (lineHeight * 2f) + 3f;
         var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
-        var contentLeft = min.X + 16f + checkboxAreaWidth;
+        var contentLeft = min.X + 16f + checkboxAreaWidth + iconAreaWidth;
         var textMaxWidth = MathF.Max(1f, max.X - actionsWidth - 32f - contentLeft);
         var displayedName = TrimTextToWidth(game.Name, textMaxWidth);
         var displayedDetail = TrimTextToWidth(detail, textMaxWidth);
+
+        if (hasIcon)
+        {
+            var iconMin = new Vector2(min.X + 16f + checkboxAreaWidth, textStartY + MathF.Max(0f, (contentHeight - DashboardGameIconSize) * 0.5f));
+            var iconMax = iconMin + new Vector2(DashboardGameIconSize, DashboardGameIconSize);
+            drawList.AddImage(iconTextureId, iconMin, iconMax);
+        }
+
         drawList.AddText(new Vector2(contentLeft, textStartY), textColor, displayedName);
         drawList.AddText(new Vector2(contentLeft, textStartY + lineHeight + 3f), detailColor, displayedDetail);
 
@@ -4709,6 +4735,58 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         var paddedTextWidth = ImGui.CalcTextSize(label).X + (ImGui.GetStyle().FramePadding.X * 2f);
         return MathF.Max(minWidth, MathF.Ceiling(paddedTextWidth));
+    }
+
+    private nint GetGameExecutableIconTextureId(GameInstance game)
+    {
+        if (_renderer == null)
+        {
+            return 0;
+        }
+
+        var executablePath = ResolveGameExecutablePath(game);
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return 0;
+        }
+
+        if (_gameExecutableIconTextureIds.TryGetValue(executablePath, out var cachedTextureId))
+        {
+            return cachedTextureId;
+        }
+
+        var iconBitmap = ExecutableIconService.TryLoadRgbaIcon(executablePath, DashboardGameIconTextureSize);
+        var textureId = iconBitmap.HasValue
+            ? _renderer.CreateTexture(iconBitmap.Value.Pixels, iconBitmap.Value.Width, iconBitmap.Value.Height)
+            : 0;
+        _gameExecutableIconTextureIds[executablePath] = textureId;
+        return textureId;
+    }
+
+    private void ReleaseGameExecutableIconTextures()
+    {
+        if (_renderer != null)
+        {
+            foreach (var textureId in _gameExecutableIconTextureIds.Values)
+            {
+                _renderer.ReleaseTexture(textureId);
+            }
+        }
+
+        _gameExecutableIconTextureIds.Clear();
+    }
+
+    private static string? ResolveGameExecutablePath(GameInstance game)
+    {
+        if (string.IsNullOrWhiteSpace(game.GamePath) || string.IsNullOrWhiteSpace(game.ExecutableName))
+        {
+            return null;
+        }
+
+        var executablePath = Path.Combine(game.GamePath, game.ExecutableName);
+        return File.Exists(executablePath)
+            ? executablePath
+            : null;
     }
 
     private void DrawClippedScrollableText(ImDrawListPtr drawList, Vector2 position, uint color, string text, float maxWidth, bool shouldScroll)

@@ -99,6 +99,9 @@ internal static class Win32Native
     public const int IMAGE_ICON = 1;
     public const uint LR_LOADFROMFILE = 0x0010;
     public const uint LR_DEFAULTSIZE = 0x0040;
+    public const uint BI_RGB = 0;
+    public const uint DIB_RGB_COLORS = 0;
+    public const uint DI_NORMAL = 0x0003;
     public const int SM_CXICON = 11;
     public const int SM_CYICON = 12;
     public const int SM_CXSMICON = 49;
@@ -276,6 +279,29 @@ internal static class Win32Native
         public byte[] rgbReserved;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BITMAPINFOHEADER
+    {
+        public uint biSize;
+        public int biWidth;
+        public int biHeight;
+        public ushort biPlanes;
+        public ushort biBitCount;
+        public uint biCompression;
+        public uint biSizeImage;
+        public int biXPelsPerMeter;
+        public int biYPelsPerMeter;
+        public uint biClrUsed;
+        public uint biClrImportant;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BITMAPINFO
+    {
+        public BITMAPINFOHEADER bmiHeader;
+        public uint bmiColors;
+    }
+
     [DllImport("kernel32.dll", EntryPoint = "GetModuleHandleW", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern nint GetModuleHandle(string? lpModuleName);
 
@@ -375,6 +401,9 @@ internal static class Win32Native
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint LoadCursor(nint hInstance, nint lpCursorName);
 
+    [DllImport("shell32.dll", EntryPoint = "ExtractIconExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern uint ExtractIconEx(string lpszFile, int nIconIndex, nint[]? phiconLarge, nint[]? phiconSmall, uint nIcons);
+
     [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern nint LoadImage(nint hInst, string name, uint type, int cx, int cy, uint fuLoad);
 
@@ -407,6 +436,23 @@ internal static class Win32Native
 
     [DllImport("gdi32.dll", SetLastError = true)]
     internal static extern nint CreateSolidBrush(uint color);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern nint CreateCompatibleDC(nint hdc);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DeleteDC(nint hdc);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern nint CreateDIBSection(nint hdc, [In] ref BITMAPINFO pbmi, uint iUsage, out nint ppvBits, nint hSection, uint dwOffset);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern nint SelectObject(nint hdc, nint hObject);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DrawIconEx(nint hdc, int xLeft, int yTop, nint hIcon, int cxWidth, int cyWidth, uint istepIfAniCur, nint hbrFlickerFreeDraw, uint diFlags);
 
     [DllImport("gdi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
