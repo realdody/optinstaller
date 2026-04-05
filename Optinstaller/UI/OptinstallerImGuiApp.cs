@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using ImGuiNET;
 using Optinstaller.Models;
 using Optinstaller.Platform;
+using Optinstaller.Services;
 using Optinstaller.ViewModels;
 
 namespace Optinstaller.UI;
@@ -1133,10 +1134,14 @@ public sealed class OptinstallerImGuiApp : IDisposable
                     QueueConfirmation(
                         ConfirmationHost.MainWindow,
                         $"Uninstall from {game.Name}",
-                        "This removes OptiScaler files from the selected game but keeps the game in your library.",
+                        "This removes OptiScaler files from the selected game but keeps the game in your library." +
+                        (ElevatedOperationService.RequiresElevation(game.GamePath)
+                            ? BuildProtectedFolderNotice("This folder is protected. Continuing will require administrator approval before OptiManager can remove the installed files.")
+                            : string.Empty),
                         "Uninstall",
                         () => dashboard.UninstallOptiScaler(game),
-                        $"Uninstalled OptiScaler from {game.Name}.");
+                        $"Uninstalled OptiScaler from {game.Name}.",
+                        $"Could not uninstall OptiScaler from {game.Name}");
                     break;
                 case DashboardGameRowAction.UpdateVersion:
                     OpenUpdateDialog(game);
@@ -1296,10 +1301,14 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 QueueConfirmation(
                     ConfirmationHost.GameDetailsWindow,
                     $"Uninstall from {game.Name}",
-                    "This removes OptiScaler files from the selected game but keeps the game in your library.",
+                    "This removes OptiScaler files from the selected game but keeps the game in your library." +
+                    (ElevatedOperationService.RequiresElevation(game.GamePath)
+                        ? BuildProtectedFolderNotice("This folder is protected. Continuing will require administrator approval before OptiManager can remove the installed files.")
+                        : string.Empty),
                     "Uninstall",
                     () => dashboard.UninstallOptiScaler(game),
-                    $"Uninstalled OptiScaler from {game.Name}.");
+                    $"Uninstalled OptiScaler from {game.Name}.",
+                    $"Could not uninstall OptiScaler from {game.Name}");
             }
         }
 
@@ -1310,7 +1319,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 ConfirmationHost.GameDetailsWindow,
                 $"Remove {game.Name}",
                 game.IsInstalled
-                    ? "This removes the game from the library and uninstalls OptiScaler from it."
+                    ? "This removes the game from the library and uninstalls OptiScaler from it." +
+                      (ElevatedOperationService.RequiresElevation(game.GamePath)
+                          ? BuildProtectedFolderNotice("This folder is protected. Continuing will require administrator approval before OptiManager can remove the installed files.")
+                          : string.Empty)
                     : "This removes the game from the library.",
                 "Remove",
                 async () =>
@@ -1318,7 +1330,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
                     await dashboard.RemoveGame(game);
                     CloseGameDetailsDialog();
                 },
-                $"Removed {game.Name} from the library.");
+                $"Removed {game.Name} from the library.",
+                $"Could not remove {game.Name}");
         }
     }
 
@@ -2692,6 +2705,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             var action = _confirmation.ConfirmAction;
             var successMessage = _confirmation.SuccessMessage;
+            var failureMessage = _confirmation.FailureMessage ?? $"{_confirmation.Title} failed";
 
             StartUiTask(async () =>
             {
@@ -2700,7 +2714,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 {
                     SetNotification(successMessage, NotificationKind.Success);
                 }
-            }, $"{_confirmation.Title} failed");
+            }, failureMessage);
 
             ImGui.CloseCurrentPopup();
             CloseConfirmationDialog();
@@ -2723,6 +2737,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
             return;
         }
 
+        RenderNotification();
+        RenderConfirmationDialog(ConfirmationHost.UpdateWindow);
+
         ImGui.TextWrapped("Select the downloaded OptiScaler version to apply.");
         ImGui.Spacing();
 
@@ -2742,7 +2759,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 var game = _updateDialog.Game;
                 var versionToInstall = _updateDialog.SelectedVersion;
 
-                StartUiTask(
+                StartProtectedUiTask(
+                    game.GamePath,
+                    ConfirmationHost.MainWindow,
+                    BuildAdministratorPromptMessage(game.GamePath, "update files in this directory"),
                     () => _mainViewModel.Dashboard.UpdateOptiScaler(game, versionToInstall),
                     $"Could not update {game.Name}",
                     $"Updated {game.Name} to {versionToInstall.TagName}.");
@@ -2881,6 +2901,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         RenderNotification();
+        RenderConfirmationDialog(ConfirmationHost.InstallationWindow);
 
         var wizard = _installationDialog.ViewModel;
 
@@ -2920,7 +2941,21 @@ public sealed class OptinstallerImGuiApp : IDisposable
             ImGui.BeginDisabled(wizard.IsInstalling || !wizard.CanGoNext);
             if (ImGui.Button(wizard.NextButtonText, new Vector2(120f, 0f)))
             {
-                StartUiTask(() => wizard.Next(), "The installation wizard failed");
+                if (wizard.StepIndex == 5 && wizard.RequiresAdministratorAccess)
+                {
+                    QueueConfirmation(
+                        ConfirmationHost.InstallationWindow,
+                        "Administrator access required",
+                        $"OptiManager needs administrator privileges to install files in this protected folder:\n{wizard.Options.GamePath}\n\nContinue to show the Windows UAC prompt, or Cancel to stop the installation.",
+                        "Continue",
+                        () => wizard.Next(),
+                        null,
+                        "The installation wizard failed");
+                }
+                else
+                {
+                    StartUiTask(() => wizard.Next(), "The installation wizard failed");
+                }
             }
             ImGui.EndDisabled();
         }
@@ -3101,6 +3136,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 ImGui.TextUnformatted($"Filename: {wizard.SelectedFilename}");
                 ImGui.TextUnformatted($"Spoofing: {wizard.EnableSpoofing}");
                 ImGui.TextUnformatted($"OptiPatcher: {wizard.UseOptiPatcher}");
+                if (wizard.RequiresAdministratorAccess)
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(WarningColor, "This folder is protected. OptiManager will ask for administrator approval before writing files.");
+                }
                 ImGui.Spacing();
                 var createUninstaller = wizard.CreateUninstaller;
                 if (ImGui.Checkbox("Create uninstaller script", ref createUninstaller))
@@ -3207,7 +3247,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 return;
             }
 
-            StartUiTask(
+            StartProtectedUiTask(
+                game.GamePath,
+                ConfirmationHost.MainWindow,
+                BuildAdministratorPromptMessage(game.GamePath, "install OptiScaler in this directory"),
                 () => RunQuickInstallAsync(game, wizard),
                 "Could not install OptiScaler",
                 $"Installed OptiScaler for {game.Name}.");
@@ -3221,18 +3264,22 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private bool TryHandleQuickInstallConflict(GameInstance game, InstallationWizardViewModel wizard)
     {
         var conflict = wizard.SelectedFilenameConflict;
+        var protectedFolderMessage = ElevatedOperationService.RequiresElevation(game.GamePath)
+            ? BuildProtectedFolderNotice("Continuing will require administrator approval before OptiManager can write to this directory.")
+            : string.Empty;
         if (conflict.HasChainedLoaderRecommendation)
         {
             QueueConfirmation(
                 ConfirmationHost.MainWindow,
                 $"{conflict.ChainedLoaderProvider} detected",
-                BuildQuickInstallManagedChainMessage(conflict),
+                BuildQuickInstallManagedChainMessage(conflict) + protectedFolderMessage,
                 $"Install + load {conflict.ChainedLoaderProvider}",
                 async () =>
                 {
                     await RunQuickInstallAsync(game, wizard);
                 },
-                $"Installed OptiScaler for {game.Name} and configured {conflict.ChainedLoaderProvider} chaining.");
+                $"Installed OptiScaler for {game.Name} and configured {conflict.ChainedLoaderProvider} chaining.",
+                "Could not install OptiScaler");
 
             return true;
         }
@@ -3242,14 +3289,15 @@ public sealed class OptinstallerImGuiApp : IDisposable
             QueueConfirmation(
                 ConfirmationHost.MainWindow,
                 $"{conflict.AsiLoaderProvider} detected",
-                BuildQuickInstallAsiRecommendationMessage(conflict),
+                BuildQuickInstallAsiRecommendationMessage(conflict) + protectedFolderMessage,
                 "Use OptiScaler.asi",
                 async () =>
                 {
                     wizard.SelectedFilename = "OptiScaler.asi";
                     await RunQuickInstallAsync(game, wizard);
                 },
-                $"Installed OptiScaler for {game.Name} using OptiScaler.asi.");
+                $"Installed OptiScaler for {game.Name} using OptiScaler.asi.",
+                "Could not install OptiScaler");
 
             return true;
         }
@@ -3262,21 +3310,22 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 QueueConfirmation(
                     ConfirmationHost.MainWindow,
                     $"{conflict.TargetFilename} already in use",
-                    BuildQuickInstallConflictMessage(conflict),
+                    BuildQuickInstallConflictMessage(conflict) + protectedFolderMessage,
                     $"Use {recommendedFilename}",
                     async () =>
                     {
                         wizard.SelectedFilename = recommendedFilename;
                         await RunQuickInstallAsync(game, wizard);
                     },
-                    $"Installed OptiScaler for {game.Name} using {recommendedFilename}.");
+                    $"Installed OptiScaler for {game.Name} using {recommendedFilename}.",
+                    "Could not install OptiScaler");
             }
             else
             {
                 QueueConfirmation(
                     ConfirmationHost.MainWindow,
                     $"{conflict.TargetFilename} already in use",
-                    BuildQuickInstallConflictMessage(conflict),
+                    BuildQuickInstallConflictMessage(conflict) + protectedFolderMessage,
                     "Open Installer",
                     () =>
                     {
@@ -3294,7 +3343,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             QueueConfirmation(
                 ConfirmationHost.MainWindow,
                 "ASI loader required",
-                "OptiScaler.asi needs an existing ASI loader in the game folder. Open the installer to choose another target filename unless you already know an ASI loader is present.",
+                "OptiScaler.asi needs an existing ASI loader in the game folder. Open the installer to choose another target filename unless you already know an ASI loader is present." + protectedFolderMessage,
                 "Open Installer",
                 () =>
                 {
@@ -3454,7 +3503,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         });
     }
 
-    private void QueueConfirmation(ConfirmationHost host, string title, string message, string confirmLabel, Func<Task> confirmAction, string? successMessage)
+    private void QueueConfirmation(ConfirmationHost host, string title, string message, string confirmLabel, Func<Task> confirmAction, string? successMessage, string? failureMessage = null)
     {
         _confirmation = new ConfirmationDialogState(
             $"{ConfirmationPopupIdPrefix}{Guid.NewGuid():N}",
@@ -3462,7 +3511,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
             message,
             confirmLabel,
             confirmAction,
-            successMessage);
+            successMessage,
+            failureMessage);
         _confirmationHost = host;
         _confirmationPopupPosition = null;
         _confirmationPopupSize = new Vector2(460f, 0f);
@@ -3509,6 +3559,30 @@ public sealed class OptinstallerImGuiApp : IDisposable
         _ = RunUiTaskAsync(action, failureMessage, successMessage);
     }
 
+    private void StartProtectedUiTask(
+        string directoryPath,
+        ConfirmationHost host,
+        string promptMessage,
+        Func<Task> action,
+        string failureMessage,
+        string? successMessage = null)
+    {
+        if (ElevatedOperationService.RequiresElevation(directoryPath))
+        {
+            QueueConfirmation(
+                host,
+                "Administrator access required",
+                promptMessage,
+                "Continue",
+                action,
+                successMessage,
+                failureMessage);
+            return;
+        }
+
+        StartUiTask(action, failureMessage, successMessage);
+    }
+
     private async Task RunUiTaskAsync(Func<Task> action, string failureMessage, string? successMessage)
     {
         try
@@ -3524,6 +3598,16 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             SetNotification($"{failureMessage}: {ex.Message}", NotificationKind.Error);
         }
+    }
+
+    private static string BuildAdministratorPromptMessage(string directoryPath, string actionDescription)
+    {
+        return $"This folder is protected:\n{directoryPath}\n\nOptiManager needs administrator privileges to {actionDescription}. Continue to show the Windows UAC prompt, or Cancel to stop.";
+    }
+
+    private static string BuildProtectedFolderNotice(string message)
+    {
+        return $"\n\n{message}";
     }
 
     private void SetNotification(string message, NotificationKind kind)
@@ -5070,12 +5154,15 @@ public sealed class OptinstallerImGuiApp : IDisposable
         string Message,
         string ConfirmLabel,
         Func<Task> ConfirmAction,
-        string? SuccessMessage);
+        string? SuccessMessage,
+        string? FailureMessage);
 
     private enum ConfirmationHost
     {
         MainWindow,
         GameDetailsWindow,
+        UpdateWindow,
+        InstallationWindow,
     }
 
     private enum DashboardGameRowAction

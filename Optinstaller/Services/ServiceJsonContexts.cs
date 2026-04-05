@@ -26,3 +26,9 @@ internal partial class AntiCheatDetectionJsonContext : JsonSerializerContext
 internal partial class OptiScalerServiceJsonContext : JsonSerializerContext
 {
 }
+
+[JsonSerializable(typeof(ElevatedOperationRequest))]
+[JsonSerializable(typeof(ElevatedOperationResponse))]
+internal partial class ElevatedOperationJsonContext : JsonSerializerContext
+{
+}

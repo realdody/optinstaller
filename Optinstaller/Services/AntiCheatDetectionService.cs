@@ -244,17 +244,14 @@ public sealed class AntiCheatDetectionService
             yield break;
         }
 
-        var current = new DirectoryInfo(Path.GetFullPath(gamePath));
-        for (var depth = 0; depth < 4 && current != null; depth++)
+        foreach (var directory in GetRelevantGameDirectories(gamePath))
         {
-            if (!StructuralDirectoryNames.Any(name => name.Equals(current.Name, StringComparison.OrdinalIgnoreCase)) &&
-                !string.IsNullOrWhiteSpace(current.Name) &&
-                seen.Add(current.Name))
+            if (!StructuralDirectoryNames.Any(name => name.Equals(directory.Name, StringComparison.OrdinalIgnoreCase)) &&
+                !string.IsNullOrWhiteSpace(directory.Name) &&
+                seen.Add(directory.Name))
             {
-                yield return current.Name;
+                yield return directory.Name;
             }
-
-            current = current.Parent;
         }
     }
 
@@ -278,21 +275,30 @@ public sealed class AntiCheatDetectionService
 
     private static IReadOnlyList<string> GetProbeRoots(string gamePath)
     {
-        var roots = new List<string>();
+        return GetRelevantGameDirectories(gamePath)
+            .Select(directory => directory.FullName)
+            .ToList();
+    }
+
+    private static IReadOnlyList<DirectoryInfo> GetRelevantGameDirectories(string gamePath)
+    {
+        var directories = new List<DirectoryInfo>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var current = new DirectoryInfo(Path.GetFullPath(gamePath));
 
-        for (var depth = 0; depth < 4 && current != null; depth++)
+        while (current != null && seen.Add(current.FullName))
         {
-            if (seen.Add(current.FullName))
+            directories.Add(current);
+
+            if (!StructuralDirectoryNames.Any(name => name.Equals(current.Name, StringComparison.OrdinalIgnoreCase)))
             {
-                roots.Add(current.FullName);
+                break;
             }
 
             current = current.Parent;
         }
 
-        return roots;
+        return directories;
     }
 
     private static void AddProviders(List<string> providers, HashSet<string> seenProviders, IEnumerable<string> values)

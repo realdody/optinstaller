@@ -206,77 +206,45 @@ public class OptiScalerService
 
     public async Task InstallAsync(InstallationOptions options)
     {
-        await Task.Run(async () => 
+        if (ShouldUseElevatedOperation(options.GamePath))
         {
-            var gamePath = options.GamePath;
-            var versionPath = options.VersionPath;
-            var targetFilename = options.TargetFilename;
+            await RunElevatedOperationAsync("install", options);
+            return;
+        }
 
-            var managedLoaderState = PrepareManagedChainedLoader(options);
-            if (managedLoaderState != null)
-            {
-                SaveManagedLoaderInstallState(gamePath, managedLoaderState);
-            }
+        try
+        {
+            await InstallCoreAsync(options);
+        }
+        catch (Exception ex) when (ShouldRetryElevatedOperation(options.GamePath, ex))
+        {
+            await RunElevatedOperationAsync("install", options);
+        }
+    }
 
-            // Use the shared method to copy the DLL
-            UpdateDll(gamePath, versionPath, targetFilename);
+    public async Task UpdateInstalledAsync(string gamePath, string versionPath, string targetFilename)
+    {
+        var options = new InstallationOptions
+        {
+            GamePath = gamePath,
+            VersionPath = versionPath,
+            TargetFilename = targetFilename,
+        };
 
-            var configPath = Path.Combine(gamePath, OptiScalerIniName);
-            var sourceConfig = Path.Combine(versionPath, OptiScalerIniName);
-            
-            if (!File.Exists(configPath) && File.Exists(sourceConfig))
-            {
-                File.Copy(sourceConfig, configPath);
-            }
+        if (ShouldUseElevatedOperation(gamePath))
+        {
+            await RunElevatedOperationAsync("update", options);
+            return;
+        }
 
-            if (File.Exists(configPath))
-            {
-                var content = File.ReadAllText(configPath);
-                
-                // If not enabled (AMD/Intel), force false. If enabled (Nvidia), we generally leave as auto or default.
-                if (!options.EnableSpoofing)
-                {
-                    content = content.Replace("Dxgi=auto", "Dxgi=false")
-                                     .Replace("Dxgi=true", "Dxgi=false");
-                }
-
-                if (string.Equals(options.ChainedLoaderProvider, "ReShade", StringComparison.OrdinalIgnoreCase))
-                {
-                    content = SetOrReplaceConfigValue(content, "LoadReshade", "true");
-                }
-
-                if (string.Equals(options.ChainedLoaderProvider, "Special K", StringComparison.OrdinalIgnoreCase))
-                {
-                    content = SetOrReplaceConfigValue(content, "LoadSpecialK", "true");
-                }
-                 
-                if (options.UseOptiPatcher)
-                {
-                     content = content.Replace("LoadAsiPlugins=auto", "LoadAsiPlugins=true");
-                     content = content.Replace("LoadAsiPlugins=false", "LoadAsiPlugins=true");
-                }
-
-                File.WriteAllText(configPath, content);
-            }
-
-            if (options.UseOptiPatcher)
-            {
-                var pluginsDir = Path.Combine(gamePath, "plugins");
-                if (!Directory.Exists(pluginsDir)) Directory.CreateDirectory(pluginsDir);
-
-                var patcherDest = Path.Combine(gamePath, OptiPatcherRelativePath);
-                
-                using var client = new HttpClient();
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("Optinstaller");
-                var data = await client.GetByteArrayAsync(OptiPatcherDownloadUrl);
-                await File.WriteAllBytesAsync(patcherDest, data);
-            }
-
-            if (options.CreateUninstaller)
-            {
-                 CreateUninstallerBat(gamePath, targetFilename);
-            }
-        });
+        try
+        {
+            await Task.Run(() => UpdateDll(gamePath, versionPath, targetFilename));
+        }
+        catch (Exception ex) when (ShouldRetryElevatedOperation(gamePath, ex))
+        {
+            await RunElevatedOperationAsync("update", options);
+        }
     }
 
     public void UpdateDll(string gamePath, string versionPath, string targetFilename)
@@ -378,7 +346,122 @@ public class OptiScalerService
 
     public async Task UninstallAsync(string gamePath, string installedFilename)
     {
-        await Task.Run(() =>
+        var options = new InstallationOptions
+        {
+            GamePath = gamePath,
+            TargetFilename = installedFilename,
+        };
+
+        if (ShouldUseElevatedOperation(gamePath))
+        {
+            await RunElevatedOperationAsync("uninstall", options);
+            return;
+        }
+
+        try
+        {
+            await UninstallCoreAsync(gamePath, installedFilename);
+        }
+        catch (Exception ex) when (ShouldRetryElevatedOperation(gamePath, ex))
+        {
+            await RunElevatedOperationAsync("uninstall", options);
+        }
+    }
+
+    internal async Task ExecuteElevatedOperationAsync(ElevatedOperationRequest request)
+    {
+        switch (request.Operation.Trim().ToLowerInvariant())
+        {
+            case "install":
+                await InstallCoreAsync(request.Options);
+                break;
+            case "update":
+                UpdateDll(request.Options.GamePath, request.Options.VersionPath, request.Options.TargetFilename);
+                break;
+            case "uninstall":
+                await UninstallCoreAsync(request.Options.GamePath, request.Options.TargetFilename);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported elevated operation '{request.Operation}'.");
+        }
+    }
+
+    private async Task InstallCoreAsync(InstallationOptions options)
+    {
+        await Task.Run(async () =>
+        {
+            var gamePath = options.GamePath;
+            var versionPath = options.VersionPath;
+            var targetFilename = options.TargetFilename;
+
+            var managedLoaderState = PrepareManagedChainedLoader(options);
+            if (managedLoaderState != null)
+            {
+                SaveManagedLoaderInstallState(gamePath, managedLoaderState);
+            }
+
+            UpdateDll(gamePath, versionPath, targetFilename);
+
+            var configPath = Path.Combine(gamePath, OptiScalerIniName);
+            var sourceConfig = Path.Combine(versionPath, OptiScalerIniName);
+
+            if (!File.Exists(configPath) && File.Exists(sourceConfig))
+            {
+                File.Copy(sourceConfig, configPath);
+            }
+
+            if (File.Exists(configPath))
+            {
+                var content = File.ReadAllText(configPath);
+
+                if (!options.EnableSpoofing)
+                {
+                    content = content.Replace("Dxgi=auto", "Dxgi=false")
+                                     .Replace("Dxgi=true", "Dxgi=false");
+                }
+
+                if (string.Equals(options.ChainedLoaderProvider, "ReShade", StringComparison.OrdinalIgnoreCase))
+                {
+                    content = SetOrReplaceConfigValue(content, "LoadReshade", "true");
+                }
+
+                if (string.Equals(options.ChainedLoaderProvider, "Special K", StringComparison.OrdinalIgnoreCase))
+                {
+                    content = SetOrReplaceConfigValue(content, "LoadSpecialK", "true");
+                }
+
+                if (options.UseOptiPatcher)
+                {
+                    content = content.Replace("LoadAsiPlugins=auto", "LoadAsiPlugins=true")
+                                     .Replace("LoadAsiPlugins=false", "LoadAsiPlugins=true");
+                }
+
+                File.WriteAllText(configPath, content);
+            }
+
+            if (options.UseOptiPatcher)
+            {
+                var pluginsDir = Path.Combine(gamePath, "plugins");
+                if (!Directory.Exists(pluginsDir)) Directory.CreateDirectory(pluginsDir);
+
+                var patcherDest = Path.Combine(gamePath, OptiPatcherRelativePath);
+
+                using var client = new HttpClient();
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("Optinstaller");
+                var data = await client.GetByteArrayAsync(OptiPatcherDownloadUrl);
+                await File.WriteAllBytesAsync(patcherDest, data);
+            }
+
+            if (options.CreateUninstaller)
+            {
+                CreateUninstallerBat(gamePath, targetFilename);
+            }
+        });
+    }
+
+    private Task UninstallCoreAsync(string gamePath, string installedFilename)
+    {
+        return Task.Run(() =>
         {
             var managedLoaderState = LoadManagedLoaderInstallState(gamePath);
 
@@ -400,13 +483,15 @@ public class OptiScalerService
                 var path = Path.Combine(gamePath, file);
                 if (File.Exists(path)) File.Delete(path);
             }
-            
+
             var patcher = Path.Combine(gamePath, OptiPatcherRelativePath);
             if (File.Exists(patcher)) File.Delete(patcher);
-            
+
             var pluginsDir = Path.Combine(gamePath, "plugins");
             if (Directory.Exists(pluginsDir) && !Directory.EnumerateFileSystemEntries(pluginsDir).Any())
+            {
                 Directory.Delete(pluginsDir);
+            }
 
             var dirsToRemove = new[] { "D3D12_Optiscaler", "DlssOverrides", "Licenses" };
             foreach (var dir in dirsToRemove)
@@ -416,6 +501,27 @@ public class OptiScalerService
             }
 
             RestoreManagedChainedLoader(gamePath, managedLoaderState);
+        });
+    }
+
+    private static bool ShouldUseElevatedOperation(string gamePath)
+    {
+        return ElevatedOperationService.RequiresElevation(gamePath);
+    }
+
+    private static bool ShouldRetryElevatedOperation(string gamePath, Exception ex)
+    {
+        return OperatingSystem.IsWindows() &&
+               !ElevatedOperationService.IsProcessElevated() &&
+               ElevatedOperationService.IsAccessDenied(ex);
+    }
+
+    private static Task RunElevatedOperationAsync(string operation, InstallationOptions options)
+    {
+        return ElevatedOperationService.RunElevatedAsync(new ElevatedOperationRequest
+        {
+            Operation = operation,
+            Options = options,
         });
     }
 
@@ -793,10 +899,14 @@ public class OptiScalerService
             }
 
             var machine = reader.ReadUInt16();
+            if (machine == 0x014c)
+            {
+                return TryIsManagedAnyCpuAssembly(stream, reader, peOffset);
+            }
+
             return machine switch
             {
                 0x8664 or 0x0200 => true,
-                0x014c => false,
                 _ => null,
             };
         }
@@ -804,6 +914,62 @@ public class OptiScalerService
         {
             return null;
         }
+    }
+
+    private static bool TryIsManagedAnyCpuAssembly(Stream stream, BinaryReader reader, int peOffset)
+    {
+        var optionalHeaderStart = peOffset + 24;
+        stream.Position = optionalHeaderStart;
+        var optionalHeaderMagic = reader.ReadUInt16();
+        var dataDirectoryStart = optionalHeaderMagic switch
+        {
+            0x10b => optionalHeaderStart + 96,
+            0x20b => optionalHeaderStart + 112,
+            _ => throw new InvalidDataException("Unknown PE optional header format."),
+        };
+
+        var comDescriptorDirectoryOffset = dataDirectoryStart + (14 * 8);
+        stream.Position = comDescriptorDirectoryOffset;
+        var cliHeaderRva = reader.ReadUInt32();
+        _ = reader.ReadUInt32();
+        if (cliHeaderRva == 0)
+        {
+            return false;
+        }
+
+        stream.Position = peOffset + 6;
+        var sectionCount = reader.ReadUInt16();
+        stream.Position = peOffset + 20;
+        var optionalHeaderSize = reader.ReadUInt16();
+        var sectionTableOffset = peOffset + 24 + optionalHeaderSize;
+
+        var cliHeaderFileOffset = 0;
+        for (var index = 0; index < sectionCount; index++)
+        {
+            stream.Position = sectionTableOffset + (index * 40) + 12;
+            var virtualSize = reader.ReadUInt32();
+            var virtualAddress = reader.ReadUInt32();
+            var sizeOfRawData = reader.ReadUInt32();
+            var pointerToRawData = reader.ReadUInt32();
+
+            if (cliHeaderRva >= virtualAddress && cliHeaderRva < virtualAddress + Math.Max(virtualSize, sizeOfRawData))
+            {
+                cliHeaderFileOffset = (int)(pointerToRawData + (cliHeaderRva - virtualAddress));
+                break;
+            }
+        }
+
+        if (cliHeaderFileOffset == 0)
+        {
+            return false;
+        }
+
+        stream.Position = cliHeaderFileOffset + 16;
+        var corFlags = reader.ReadUInt32();
+        var is32BitRequired = (corFlags & 0x2) != 0;
+        var is32BitPreferred = (corFlags & 0x20000) != 0;
+
+        return !is32BitRequired && !is32BitPreferred;
     }
 
     private static string ReadMetadataText(string path, out string details)

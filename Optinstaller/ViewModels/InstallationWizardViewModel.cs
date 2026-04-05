@@ -26,6 +26,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
     [ObservableProperty] private bool _showEngineWarning;
     [ObservableProperty] private bool _isSupportedArchitecture = true;
     [ObservableProperty] private string _unsupportedArchitectureMessage = string.Empty;
+    [ObservableProperty] private bool _requiresAdministratorAccess;
     [ObservableProperty] private bool _isCheckingEnvironment;
     
     [ObservableProperty] private ObservableCollection<OptiScalerVersion> _availableVersions;
@@ -107,6 +108,7 @@ public partial class InstallationWizardViewModel : ViewModelBase
             }
 
             CheckExecutableArchitecture();
+            RequiresAdministratorAccess = ElevatedOperationService.RequiresElevation(_options.GamePath);
 
             // In .NET cross-platform, difficult to check registry easily without platform guards.
             // We'll assume Windows logic primarily as requested.

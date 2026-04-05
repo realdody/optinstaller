@@ -1085,10 +1085,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             throw new InvalidOperationException("The selected game does not have OptiScaler installed.");
         }
 
-        await Task.Run(() =>
-        {
-            _optiScalerService.UpdateDll(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
-        });
+        await _optiScalerService.UpdateInstalledAsync(game.GamePath, selectedVersion.LocalPath, game.InstalledFilename);
 
         var previousIsInstalled = game.IsInstalled;
         var previousInstalledFilename = game.InstalledFilename;
