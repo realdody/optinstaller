@@ -19,7 +19,7 @@ namespace Optinstaller.UI;
 
 public sealed class OptinstallerImGuiApp : IDisposable
 {
-    private const int MinMainClientWidth = 1100;
+    private const int MinMainClientWidth = 1120;
     private const int MinMainClientHeight = 720;
     private const int MinGameDetailsClientWidth = 840;
     private const int MinGameDetailsClientHeight = 760;
@@ -1875,7 +1875,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 detailText,
                 isSelected,
                 accent,
-                version.IsBleedingEdge ? "BE" : "Official",
+                version.IsBleedingEdge ? "BE" : string.Empty,
                 centerText: true))
             {
                 _selectedVersionTag = version.TagName;
@@ -1981,9 +1981,17 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var settings = _mainViewModel.Settings;
         var preferredVersion = _mainViewModel.Dashboard.SelectedVersion;
 
-        RenderPageHeader("Settings", "Simple defaults for this session and basic app info.");
+        RenderPageHeader("Settings", "Simple defaults for this session and release source settings.");
         TextMuted("These settings only affect this app session.");
         ImGui.Spacing();
+
+        if (ShouldStackSettingsPanels())
+        {
+            RenderSettingsDefaultsPanel(settings, ref preferredVersion, new Vector2(0f, 176f));
+            ImGui.Spacing();
+            RenderSettingsRuntimePanel(settings, new Vector2(0f, 0f));
+            return;
+        }
 
         if (!ImGui.BeginTable("SettingsLayout", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings))
         {
@@ -1991,7 +1999,17 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         ImGui.TableNextColumn();
-        ImGui.BeginChild("SettingsDefaults", new Vector2(0f, 0f), PaddedPanelChildFlags, PanelWindowFlags);
+        RenderSettingsDefaultsPanel(settings, ref preferredVersion, new Vector2(0f, 0f));
+
+        ImGui.TableNextColumn();
+        RenderSettingsRuntimePanel(settings, new Vector2(0f, 0f));
+
+        ImGui.EndTable();
+    }
+
+    private void RenderSettingsDefaultsPanel(SettingsViewModel settings, ref OptiScalerVersion? preferredVersion, Vector2 size)
+    {
+        ImGui.BeginChild("SettingsDefaults", size, PaddedPanelChildFlags, ScrollablePanelWindowFlags);
         ImGui.SeparatorText("Defaults");
 
         var overlayEnabled = settings.EnableOverlay;
@@ -2003,7 +2021,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.Spacing();
         if (_mainViewModel.Dashboard.DownloadedVersions.Count > 0)
         {
-            DrawVersionCombo("Preferred install version", _mainViewModel.Dashboard.DownloadedVersions, ref preferredVersion);
+            ImGui.TextUnformatted("Preferred install version");
+            ImGui.SetNextItemWidth(-1f);
+            DrawVersionCombo("##PreferredInstallVersion", _mainViewModel.Dashboard.DownloadedVersions, ref preferredVersion);
             _mainViewModel.Dashboard.SelectedVersion = preferredVersion;
         }
         else
@@ -2014,10 +2034,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.Spacing();
         TextMuted("These values currently affect the running session only.");
         ImGui.EndChild();
+    }
 
-        ImGui.TableNextColumn();
-        ImGui.BeginChild("SettingsRuntime", new Vector2(0f, 0f), PaddedPanelChildFlags, PanelWindowFlags);
-        ImGui.SeparatorText("Sources & Runtime");
+    private void RenderSettingsRuntimePanel(SettingsViewModel settings, Vector2 size)
+    {
+        ImGui.BeginChild("SettingsRuntime", size, PaddedPanelChildFlags, ScrollablePanelWindowFlags);
+        ImGui.SeparatorText("Sources");
         ImGui.TextUnformatted("OptiScaler release URL");
 
         var downloadUrl = settings.OptiScalerDownloadUrl;
@@ -2033,38 +2055,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
             TryOpenExternalUrl(settings.OptiScalerDownloadUrl);
         }
 
-        ImGui.Spacing();
-        ImGui.SeparatorText("Runtime");
-
-        if (ImGui.BeginTable("RuntimeSummaryTop", 3, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
-        {
-            ImGui.TableNextColumn();
-            RenderCompactKeyValue("UI Host", "Dear ImGui + Win32 + Direct3D 11");
-
-            ImGui.TableNextColumn();
-            RenderCompactKeyValue("Framework", Environment.Version.ToString());
-
-            ImGui.TableNextColumn();
-            RenderCompactKeyValue("Window Size", $"{_windowWidth} x {_windowHeight}");
-
-            ImGui.EndTable();
-        }
-
-        ImGui.Spacing();
-
-        if (ImGui.BeginTable("RuntimeSummaryBottom", 2, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
-        {
-            ImGui.TableNextColumn();
-            RenderCompactKeyValue("Tracked Games", _mainViewModel.Dashboard.Games.Count.ToString());
-
-            ImGui.TableNextColumn();
-            RenderCompactKeyValue("Downloaded Versions", _mainViewModel.Dashboard.DownloadedVersions.Count.ToString());
-
-            ImGui.EndTable();
-        }
         ImGui.EndChild();
+    }
 
-        ImGui.EndTable();
+    private static bool ShouldStackSettingsPanels()
+    {
+        return ImGui.GetContentRegionAvail().X < 980f;
     }
 
     private void RenderPageHeader(string title, string subtitle)
@@ -2334,7 +2330,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private static void RenderToolbarStat(string text, bool isLast = false)
     {
-        ImGui.SameLine(0f, 10f);
+        ContinueOnSameLineIfFits(GetToolbarStatWidth(text, isLast), 10f);
         ImGui.TextDisabled(text);
 
         if (isLast)
@@ -2342,8 +2338,19 @@ public sealed class OptinstallerImGuiApp : IDisposable
             return;
         }
 
-        ImGui.SameLine(0f, 10f);
+        ContinueOnSameLineIfFits(ImGui.CalcTextSize("|").X, 10f);
         ImGui.TextDisabled("|");
+    }
+
+    private static float GetToolbarStatWidth(string text, bool isLast)
+    {
+        var width = ImGui.CalcTextSize(text).X;
+        if (!isLast)
+        {
+            width += 10f + ImGui.CalcTextSize("|").X;
+        }
+
+        return width;
     }
 
     private string GetAnimatedStatusText(string status, string fallback)
@@ -4321,9 +4328,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
         var detailY = textStartY + lineHeight + 3f;
         var pillsOrigin = new Vector2(contentLeft, detailY + lineHeight + 8f);
+        var textMaxWidth = MathF.Max(1f, max.X - actionsWidth - 32f - contentLeft);
+        var displayedName = TrimTextToWidth(game.Name, textMaxWidth);
+        var displayedDetail = TrimTextToWidth(detail, textMaxWidth);
 
-        drawList.AddText(new Vector2(contentLeft, textStartY), textColor, game.Name);
-        drawList.AddText(new Vector2(contentLeft, detailY), detailColor, detail);
+        drawList.AddText(new Vector2(contentLeft, textStartY), textColor, displayedName);
+        drawList.AddText(new Vector2(contentLeft, detailY), detailColor, displayedDetail);
         var pillLayouts = DrawInstalledGamePills(drawList, pillsOrigin, pillsWidth, game);
 
         var buttonY = min.Y + MathF.Max(8f, (rowHeight - buttonHeight) * 0.5f);
@@ -4448,8 +4458,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var contentHeight = (lineHeight * 2f) + 3f;
         var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
         var contentLeft = min.X + 16f + checkboxAreaWidth;
-        drawList.AddText(new Vector2(contentLeft, textStartY), textColor, game.Name);
-        drawList.AddText(new Vector2(contentLeft, textStartY + lineHeight + 3f), detailColor, detail);
+        var textMaxWidth = MathF.Max(1f, max.X - actionsWidth - 32f - contentLeft);
+        var displayedName = TrimTextToWidth(game.Name, textMaxWidth);
+        var displayedDetail = TrimTextToWidth(detail, textMaxWidth);
+        drawList.AddText(new Vector2(contentLeft, textStartY), textColor, displayedName);
+        drawList.AddText(new Vector2(contentLeft, textStartY + lineHeight + 3f), detailColor, displayedDetail);
 
         var buttonY = min.Y + MathF.Max(8f, (rowHeight - buttonHeight) * 0.5f);
         var checkboxY = min.Y + MathF.Max(8f, (rowHeight - checkboxSize) * 0.5f);
@@ -4602,8 +4615,6 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var textColor = ImGui.ColorConvertFloat4ToU32(PrimaryTextColor);
         var detailColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(MutedTextColor, accent, 0.35f));
         var badgeColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(new Vector4(accent.X, accent.Y, accent.Z, 0.75f), accent, emphasis));
-        var titleSize = ImGui.CalcTextSize(title);
-        var detailSize = hasDetail ? ImGui.CalcTextSize(detail) : Vector2.Zero;
         var hasBadge = !string.IsNullOrWhiteSpace(badge);
         var badgeSize = hasBadge ? ImGui.CalcTextSize(badge) : Vector2.Zero;
 
@@ -4647,25 +4658,41 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 2f);
         }
 
-        var contentHeight = hasDetail ? (lineHeight * 2f) + 3f : lineHeight;
-        var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
-        var textBlockWidth = MathF.Max(titleSize.X, detailSize.X);
         var contentLeft = min.X + 16f;
         var contentRight = hasBadge ? max.X - badgeSize.X - 24f : max.X - 16f;
         var availableWidth = MathF.Max(0f, contentRight - contentLeft);
+        var rawDetailSize = hasDetail ? ImGui.CalcTextSize(detail) : Vector2.Zero;
+        var scrollDetail = persistentIndicator && hasDetail && (selected || hovered) && rawDetailSize.X > availableWidth;
+        var displayedTitle = TrimTextToWidth(title, availableWidth);
+        var displayedDetail = hasDetail
+            ? scrollDetail ? detail : TrimTextToWidth(detail, availableWidth)
+            : string.Empty;
+        var titleSize = ImGui.CalcTextSize(displayedTitle);
+        var detailSize = hasDetail
+            ? new Vector2(scrollDetail ? availableWidth : ImGui.CalcTextSize(displayedDetail).X, rawDetailSize.Y)
+            : Vector2.Zero;
+        var contentHeight = hasDetail ? (lineHeight * 2f) + 3f : lineHeight;
+        var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
+        var textBlockWidth = MathF.Max(titleSize.X, detailSize.X);
         var textX = centerText
             ? contentLeft + MathF.Max(0f, (availableWidth - textBlockWidth) * 0.5f)
             : contentLeft;
         var titleX = centerText ? textX + MathF.Max(0f, (textBlockWidth - titleSize.X) * 0.5f) : textX;
 
-        drawList.AddText(new Vector2(titleX, textStartY), textColor, title);
+        drawList.AddText(new Vector2(titleX, textStartY), textColor, displayedTitle);
 
         if (hasDetail)
         {
             var detailX = centerText
                 ? textX + MathF.Max(0f, (textBlockWidth - detailSize.X) * 0.5f)
                 : textX;
-            drawList.AddText(new Vector2(detailX, textStartY + lineHeight + 3f), detailColor, detail);
+            DrawClippedScrollableText(
+                drawList,
+                new Vector2(detailX, textStartY + lineHeight + 3f),
+                detailColor,
+                displayedDetail,
+                MathF.Max(1f, detailSize.X),
+                scrollDetail);
         }
 
         if (hasBadge)
@@ -4684,6 +4711,102 @@ public sealed class OptinstallerImGuiApp : IDisposable
         return MathF.Max(minWidth, MathF.Ceiling(paddedTextWidth));
     }
 
+    private void DrawClippedScrollableText(ImDrawListPtr drawList, Vector2 position, uint color, string text, float maxWidth, bool shouldScroll)
+    {
+        if (string.IsNullOrWhiteSpace(text) || maxWidth <= 0f)
+        {
+            return;
+        }
+
+        var textSize = ImGui.CalcTextSize(text);
+        if (!shouldScroll || textSize.X <= maxWidth)
+        {
+            drawList.AddText(position, color, text);
+            return;
+        }
+
+        var overflowWidth = textSize.X - maxWidth;
+        var scrollOffset = GetScrollingTextOffset(overflowWidth);
+        drawList.PushClipRect(position, new Vector2(position.X + maxWidth, position.Y + textSize.Y + 2f), true);
+        drawList.AddText(new Vector2(position.X - scrollOffset, position.Y), color, text);
+        drawList.PopClipRect();
+    }
+
+    private float GetScrollingTextOffset(float overflowWidth)
+    {
+        const float speed = 36f;
+        const float pauseDuration = 0.7f;
+
+        if (overflowWidth <= 0f)
+        {
+            return 0f;
+        }
+
+        var travelDuration = overflowWidth / speed;
+        if (travelDuration <= 0f)
+        {
+            return 0f;
+        }
+
+        var cycleDuration = (pauseDuration * 2f) + (travelDuration * 2f);
+        var cycleTime = _uiTime % cycleDuration;
+        if (cycleTime < pauseDuration)
+        {
+            return 0f;
+        }
+
+        cycleTime -= pauseDuration;
+        if (cycleTime < travelDuration)
+        {
+            return cycleTime * speed;
+        }
+
+        cycleTime -= travelDuration;
+        if (cycleTime < pauseDuration)
+        {
+            return overflowWidth;
+        }
+
+        cycleTime -= pauseDuration;
+        return overflowWidth - MathF.Min(overflowWidth, cycleTime * speed);
+    }
+
+    private static string TrimTextToWidth(string text, float maxWidth)
+    {
+        if (string.IsNullOrWhiteSpace(text) || maxWidth <= 0f)
+        {
+            return string.Empty;
+        }
+
+        if (ImGui.CalcTextSize(text).X <= maxWidth)
+        {
+            return text;
+        }
+
+        const string ellipsis = "...";
+        if (ImGui.CalcTextSize(ellipsis).X > maxWidth)
+        {
+            return string.Empty;
+        }
+
+        for (var length = text.Length - 1; length > 0; length--)
+        {
+            var candidate = text[..length].TrimEnd();
+            if (candidate.Length == 0)
+            {
+                continue;
+            }
+
+            var trimmed = candidate + ellipsis;
+            if (ImGui.CalcTextSize(trimmed).X <= maxWidth)
+            {
+                return trimmed;
+            }
+        }
+
+        return ellipsis;
+    }
+
     private static bool DrawCenteredButton(string id, string label, Vector2 size)
     {
         ImGui.PushID(id);
@@ -4694,13 +4817,14 @@ public sealed class OptinstallerImGuiApp : IDisposable
         return clicked;
     }
 
-    private static void ContinueOnSameLineIfFits(float nextItemWidth)
+    private static void ContinueOnSameLineIfFits(float nextItemWidth, float? spacing = null)
     {
-        var nextItemRight = ImGui.GetItemRectMax().X + ImGui.GetStyle().ItemSpacing.X + nextItemWidth;
+        var itemSpacing = spacing ?? ImGui.GetStyle().ItemSpacing.X;
+        var nextItemRight = ImGui.GetItemRectMax().X + itemSpacing + nextItemWidth;
         var contentRight = ImGui.GetWindowPos().X + ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X;
         if (nextItemRight <= contentRight)
         {
-            ImGui.SameLine();
+            ImGui.SameLine(0f, itemSpacing);
         }
     }
 
