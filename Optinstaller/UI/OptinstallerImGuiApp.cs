@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Management;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -1080,6 +1081,15 @@ public sealed class OptinstallerImGuiApp : IDisposable
         TextMuted($"Showing {filteredGames.Count} of {allGames.Count} games");
 
         ImGui.Spacing();
+        if (allGames.Count == 0 && dashboard.IsLoadingLibrary)
+        {
+            RenderCallout(
+                "Scanning your library",
+                "Saved games load first. Auto-detected store installs appear when the scan finishes.",
+                InfoColor);
+            return;
+        }
+
         if (allGames.Count == 0)
         {
             RenderCallout(
@@ -1102,6 +1112,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.BeginChild("DashboardList", new Vector2(0f, 0f), PaddedPanelChildFlags, ScrollablePanelWindowFlags);
         RenderSectionHeader($"Games ({filteredGames.Count})");
         TextMuted("Use Install or Uninstall for quick actions, or open Details for the full per-game view.");
+        if (dashboard.IsLoadingLibrary)
+        {
+            TextMuted(GetAnimatedStatusText(dashboard.LibraryStatus, "Loading library"));
+        }
+        else if (dashboard.IsRefreshingUpscalerDetection)
+        {
+            TextMuted(GetAnimatedStatusText("Scanning upscalers", "Scanning upscalers"));
+        }
+        else if (dashboard.IsRefreshingAntiCheat)
+        {
+            TextMuted(GetAnimatedStatusText("Checking anti-cheat", "Checking anti-cheat"));
+        }
         ImGui.Spacing();
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8f, 6f));
         var canQuickInstall = dashboard.DownloadedVersions.Count > 0;
@@ -1189,17 +1211,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 OpenUpdateDialog(game);
             }
 
-            ImGui.SameLine();
-            if (RenderClickableInlinePill($"GameDetails::Components::{game.GamePath}", GetUpscalersFgQuickPillText(), InfoColor))
-            {
-                OpenComponentDllDialog(game);
-            }
         }
 
-        if (!string.IsNullOrWhiteSpace(game.AntiCheatProvider))
+        ImGui.SameLine();
+        if (RenderClickableInlinePill($"GameDetails::Components::{game.GamePath}", GetUpscalersFgQuickPillText(), InfoColor))
+        {
+            OpenComponentDllDialog(game);
+        }
+
+        if (game.IsAntiCheatDetectionPending || !string.IsNullOrWhiteSpace(game.AntiCheatProvider))
         {
             ImGui.SameLine();
-            RenderInlinePill(game.AntiCheatProvider, WarningColor);
+            RenderInlinePill(GetAntiCheatDisplayText(game), game.IsAntiCheatDetectionPending ? InfoColor : WarningColor);
         }
 
         ImGui.Spacing();
@@ -1242,6 +1265,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
             RenderKeyValue("Executable", game.ExecutableName);
         }
 
+        RenderKeyValue("Supported Upscalers", GetUpscalerDisplayText(game));
+
         if (ImGui.BeginTable("GameDetailSummary", 4, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings))
         {
             ImGui.TableNextColumn();
@@ -1254,7 +1279,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             RenderCompactKeyValue("DLL", string.IsNullOrWhiteSpace(game.InstalledFilename) ? "-" : game.InstalledFilename);
 
             ImGui.TableNextColumn();
-            RenderCompactKeyValue("Anti-Cheat", string.IsNullOrWhiteSpace(game.AntiCheatProvider) ? "None detected" : game.AntiCheatProvider);
+            RenderCompactKeyValue("Anti-Cheat", GetAntiCheatDisplayText(game));
 
             ImGui.EndTable();
         }
@@ -2068,7 +2093,22 @@ public sealed class OptinstallerImGuiApp : IDisposable
         RenderToolbarStat($"Games {totalGames}");
         RenderToolbarStat($"Installed {installedCount}");
         RenderToolbarStat($"Ready {pendingCount}");
-        RenderToolbarStat($"Versions {dashboard.DownloadedVersions.Count}", isLast: true);
+        RenderToolbarStat($"Versions {dashboard.DownloadedVersions.Count}", isLast: !dashboard.IsLoadingLibrary && !dashboard.IsRefreshingAntiCheat);
+
+        if (dashboard.IsLoadingLibrary)
+        {
+            RenderToolbarStat(GetAnimatedStatusText(dashboard.LibraryStatus, "Loading library"), isLast: !dashboard.IsRefreshingUpscalerDetection && !dashboard.IsRefreshingAntiCheat);
+        }
+
+        if (dashboard.IsRefreshingUpscalerDetection)
+        {
+            RenderToolbarStat(GetAnimatedStatusText("Scanning upscalers", "Scanning upscalers"), isLast: !dashboard.IsRefreshingAntiCheat);
+        }
+
+        if (dashboard.IsRefreshingAntiCheat)
+        {
+            RenderToolbarStat(GetAnimatedStatusText("Checking anti-cheat", "Checking anti-cheat"), isLast: true);
+        }
     }
 
     private void RenderVersionsToolbar(VersionManagerViewModel versions, OptiScalerVersion? selectedVersion)
@@ -2097,6 +2137,47 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.TextDisabled("|");
     }
 
+    private string GetAnimatedStatusText(string status, string fallback)
+    {
+        var baseText = string.IsNullOrWhiteSpace(status) ? fallback : status;
+        var dotCount = ((int)(_uiTime * 2f) % 3) + 1;
+        return baseText + new string('.', dotCount);
+    }
+
+    private static string GetAntiCheatDisplayText(GameInstance game)
+    {
+        if (game.IsAntiCheatDetectionPending)
+        {
+            return "Checking...";
+        }
+
+        return string.IsNullOrWhiteSpace(game.AntiCheatProvider)
+            ? "None detected"
+            : game.AntiCheatProvider;
+    }
+
+    private static string GetUpscalerDisplayText(GameInstance game)
+    {
+        if (game.IsUpscalerDetectionPending)
+        {
+            return "Checking...";
+        }
+
+        return string.IsNullOrWhiteSpace(game.UpscalerSummary)
+            ? "No supported upscalers detected"
+            : game.UpscalerSummary;
+    }
+
+    private static Vector4 GetUpscalerDisplayColor(GameInstance game)
+    {
+        if (game.IsUpscalerDetectionPending)
+        {
+            return InfoColor;
+        }
+
+        return game.HasSupportedUpscalers ? SuccessColor : WarningColor;
+    }
+
     private void RenderDashboardHero(DashboardViewModel dashboard, GameInstance? selectedGame, int totalGames, int installedCount, int pendingCount)
     {
         ImGui.PushStyleColor(ImGuiCol.ChildBg, PanelBackgroundColor);
@@ -2112,8 +2193,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
             if (selectedGame == null)
             {
                 ImGui.TextColored(InfoColor, "Games");
-                ImGui.TextUnformatted("Add a game to get started");
-                TextMuted("Choose the game's executable, then pick a downloaded version when you are ready to install.");
+                ImGui.TextUnformatted(dashboard.IsLoadingLibrary ? "Loading your library" : "Add a game to get started");
+                TextMuted(dashboard.IsLoadingLibrary
+                    ? "Saved games load first, then auto-detected store installs fill in when the scan finishes."
+                    : "Choose the game's executable, then pick a downloaded version when you are ready to install.");
                 ImGui.Spacing();
                 if (ImGui.Button("Add Game", new Vector2(120f, 0f)))
                 {
@@ -2146,12 +2229,6 @@ public sealed class OptinstallerImGuiApp : IDisposable
                         OpenUpdateDialog(selectedGame);
                     }
 
-                    ImGui.SameLine();
-                    if (RenderClickableInlinePill($"DashboardHero::Components::{selectedGame.GamePath}", GetUpscalersFgQuickPillText(), InfoColor))
-                    {
-                        OpenComponentDllDialog(selectedGame);
-                    }
-
                     if (!string.IsNullOrWhiteSpace(selectedGame.InstalledFilename))
                     {
                         ImGui.SameLine();
@@ -2164,10 +2241,16 @@ public sealed class OptinstallerImGuiApp : IDisposable
                     RenderInlinePill(selectedGame.CurrentVersion, WarningColor);
                 }
 
-                if (!string.IsNullOrWhiteSpace(selectedGame.AntiCheatProvider))
+                ImGui.SameLine();
+                if (RenderClickableInlinePill($"DashboardHero::Components::{selectedGame.GamePath}", GetUpscalersFgQuickPillText(), InfoColor))
+                {
+                    OpenComponentDllDialog(selectedGame);
+                }
+
+                if (selectedGame.IsAntiCheatDetectionPending || !string.IsNullOrWhiteSpace(selectedGame.AntiCheatProvider))
                 {
                     ImGui.SameLine();
-                    RenderInlinePill(selectedGame.AntiCheatProvider, WarningColor);
+                    RenderInlinePill(GetAntiCheatDisplayText(selectedGame), selectedGame.IsAntiCheatDetectionPending ? InfoColor : WarningColor);
                 }
 
                 ImGui.Spacing();
@@ -2208,7 +2291,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
             RenderHeroSignal("Saved versions", dashboard.DownloadedVersions.Count.ToString(), new Vector4(0.72f, 0.84f, 0.55f, 1f));
             if (selectedGame != null)
             {
-                RenderHeroSignal("Anti-cheat", string.IsNullOrWhiteSpace(selectedGame.AntiCheatProvider) ? "None detected" : selectedGame.AntiCheatProvider, string.IsNullOrWhiteSpace(selectedGame.AntiCheatProvider) ? InfoColor : WarningColor);
+                var antiCheatText = GetAntiCheatDisplayText(selectedGame);
+                RenderHeroSignal("Anti-cheat", antiCheatText, selectedGame.IsAntiCheatDetectionPending || antiCheatText.Equals("None detected", StringComparison.OrdinalIgnoreCase) ? InfoColor : WarningColor);
+                RenderHeroSignal("Upscalers", GetUpscalerDisplayText(selectedGame), GetUpscalerDisplayColor(selectedGame));
             }
             TextMuted($"Default install version: {dashboard.SelectedVersion?.TagName ?? "None selected"}");
 
@@ -2242,7 +2327,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
             ImGui.TableNextColumn();
             ImGui.TextColored(InfoColor, "Status");
             RenderHeroSignal("Version", game.CurrentVersion, game.IsInstalled ? SuccessColor : WarningColor);
-            RenderHeroSignal("Anti-cheat", string.IsNullOrWhiteSpace(game.AntiCheatProvider) ? "None detected" : game.AntiCheatProvider, string.IsNullOrWhiteSpace(game.AntiCheatProvider) ? InfoColor : WarningColor);
+            var antiCheatText = GetAntiCheatDisplayText(game);
+            RenderHeroSignal("Anti-cheat", antiCheatText, game.IsAntiCheatDetectionPending || antiCheatText.Equals("None detected", StringComparison.OrdinalIgnoreCase) ? InfoColor : WarningColor);
+            RenderHeroSignal("Upscalers", GetUpscalerDisplayText(game), GetUpscalerDisplayColor(game));
             RenderHeroSignal("Default version", dashboard.SelectedVersion?.TagName ?? "None selected", InfoColor);
             RenderHeroSignal("Next step", game.IsInstalled ? "Configure or update" : "Install", game.IsInstalled ? SuccessColor : InfoColor);
 
@@ -2506,68 +2593,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
         return "Upscalers/FG";
     }
 
-    private static IReadOnlyList<ComponentDllEntry> GetComponentDllEntries(GameInstance game)
+    private static IReadOnlyList<ComponentDllEntry> GetComponentDllEntries(UpscalerDetectionResult detectionResult)
     {
-        return new[]
-        {
-            CreateComponentDllEntry(game.GamePath, "FSR Upscaler", "amd_fidelityfx_upscaler_dx12.dll"),
-            CreateComponentDllEntry(game.GamePath, "FSR FG", "amd_fidelityfx_framegeneration_dx12.dll"),
-            CreateComponentDllEntry(game.GamePath, "XeSS", "libxess.dll"),
-            CreateComponentDllEntry(game.GamePath, "XeFG", "libxess_fg.dll"),
-        };
-    }
-
-    private static ComponentDllEntry CreateComponentDllEntry(string gamePath, string label, string fileName)
-    {
-        var version = GetInstalledDllVersion(gamePath, fileName, out var isDetected);
-        return new ComponentDllEntry(label, fileName, version, isDetected);
-    }
-
-    private static string GetInstalledDllVersion(string gamePath, string fileName, out bool isDetected)
-    {
-        var path = Path.Combine(gamePath, fileName);
-        if (!File.Exists(path))
-        {
-            isDetected = false;
-            return "Not detected";
-        }
-
-        try
-        {
-            var versionInfo = FileVersionInfo.GetVersionInfo(path);
-            var productVersion = NormalizeDetectedDllVersion(versionInfo.ProductVersion, trimTrailingBuildSegment: false);
-            if (!string.IsNullOrWhiteSpace(productVersion))
-            {
-                isDetected = true;
-                return productVersion;
-            }
-
-            var fileVersion = NormalizeDetectedDllVersion(versionInfo.FileVersion, trimTrailingBuildSegment: true);
-            isDetected = true;
-            return string.IsNullOrWhiteSpace(fileVersion) ? "Unknown" : fileVersion;
-        }
-        catch
-        {
-            isDetected = true;
-            return "Unknown";
-        }
-    }
-
-    private static string NormalizeDetectedDllVersion(string? rawVersion, bool trimTrailingBuildSegment)
-    {
-        if (string.IsNullOrWhiteSpace(rawVersion))
-        {
-            return string.Empty;
-        }
-
-        var version = rawVersion.Trim();
-        version = Regex.Replace(version, @"\s+\(([0-9a-f]{7,40})\)$", string.Empty, RegexOptions.IgnoreCase);
-        if (trimTrailingBuildSegment && version.EndsWith(".0", StringComparison.Ordinal) && version.Split('.').Length >= 4)
-        {
-            version = version[..^2];
-        }
-
-        return version.Trim();
+        return detectionResult.Components
+            .Select(component => new ComponentDllEntry(component.Label, component.FileName, component.Version, component.IsDetected, component.RelativePath))
+            .ToList();
     }
 
     private static void RenderHeroSignal(string label, string value, Vector4 accent)
@@ -2786,24 +2816,32 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         var game = _componentDllDialog.Game;
-        ImGui.TextWrapped("Review the optional upscaler and frame generation DLLs next to OptiScaler. DLL swapping is not wired yet, so the change controls are placeholders for now.");
+        var detection = _componentDllDialog.DetectionResult ?? _mainViewModel.Dashboard.GetUpscalerDetection(game);
+        _componentDllDialog.DetectionResult = detection;
+
+        ImGui.TextWrapped("Review the supported upscaler and frame generation DLLs found under the detected game root. DLL swapping is not wired yet, so the change controls are placeholders for now.");
+        TextMuted($"Search root: {detection.SearchRootPath}");
+        TextMuted($"Status: {detection.Summary}");
         ImGui.Spacing();
 
-        if (ImGui.BeginTable("ComponentDllTable", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        if (ImGui.BeginTable("ComponentDllTable", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
         {
             ImGui.TableSetupColumn("Component", ImGuiTableColumnFlags.WidthStretch, 1.2f);
-            ImGui.TableSetupColumn("DLL", ImGuiTableColumnFlags.WidthStretch, 1.6f);
+            ImGui.TableSetupColumn("DLL", ImGuiTableColumnFlags.WidthStretch, 1.2f);
+            ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthStretch, 1.7f);
             ImGui.TableSetupColumn("Version", ImGuiTableColumnFlags.WidthStretch, 1f);
             ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 110f);
             ImGui.TableHeadersRow();
 
-            foreach (var component in GetComponentDllEntries(game))
+            foreach (var component in GetComponentDllEntries(detection))
             {
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(component.Label);
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(component.FileName);
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(string.IsNullOrWhiteSpace(component.RelativePath) ? "-" : component.RelativePath);
                 ImGui.TableNextColumn();
                 ImGui.TextColored(component.IsDetected ? SuccessColor : WarningColor, component.Version);
                 ImGui.TableNextColumn();
@@ -3494,12 +3532,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
         _componentDllDialog = new ComponentDllDialogState
         {
             Game = game,
+            DetectionResult = _mainViewModel.Dashboard.GetUpscalerDetection(game, forceRefresh: true),
         };
 
         PreserveImGuiContext(() =>
         {
             _componentDllWindow?.Dispose();
-            _componentDllWindow = CreateNativeWindow($"Upscalers / FG - {game.Name}", 760, 340, "ComponentDllRoot", RenderComponentDllWindow);
+            _componentDllWindow = CreateNativeWindow($"Upscalers / FG - {game.Name}", 920, 360, "ComponentDllRoot", RenderComponentDllWindow);
         });
     }
 
@@ -3809,7 +3848,20 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var detail = string.IsNullOrWhiteSpace(game.InstalledFilename)
             ? "Installed"
             : $"Installed - Target DLL: {game.InstalledFilename}";
-        if (!string.IsNullOrWhiteSpace(game.AntiCheatProvider))
+        if (game.IsUpscalerDetectionPending)
+        {
+            detail += " - Scanning upscalers";
+        }
+        else if (!game.HasSupportedUpscalers)
+        {
+            detail += " - No supported upscalers detected";
+        }
+
+        if (game.IsAntiCheatDetectionPending)
+        {
+            detail += " - Checking anti-cheat";
+        }
+        else if (!string.IsNullOrWhiteSpace(game.AntiCheatProvider))
         {
             detail += $" - {game.AntiCheatProvider}";
         }
@@ -3916,9 +3968,20 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var border = Vector4.Lerp(new Vector4(PanelBorderColor.X, PanelBorderColor.Y, PanelBorderColor.Z, 0.50f), new Vector4(accent.X, accent.Y, accent.Z, 0.82f), emphasis);
         var textColor = ImGui.ColorConvertFloat4ToU32(PrimaryTextColor);
         var detailColor = ImGui.ColorConvertFloat4ToU32(Vector4.Lerp(MutedTextColor, accent, 0.35f));
-        var detail = string.IsNullOrWhiteSpace(game.AntiCheatProvider)
-            ? "Not installed"
-            : $"Not installed - {game.AntiCheatProvider}";
+        var detail = game.IsUpscalerDetectionPending
+            ? "Not installed - Scanning upscalers"
+            : game.HasSupportedUpscalers
+                ? $"Not installed - {game.UpscalerSummary}"
+                : "Not installed - No supported upscalers detected";
+
+        if (game.IsAntiCheatDetectionPending)
+        {
+            detail += " - Checking anti-cheat";
+        }
+        else if (!string.IsNullOrWhiteSpace(game.AntiCheatProvider))
+        {
+            detail += $" - {game.AntiCheatProvider}";
+        }
 
         drawList.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(background), 2f);
         drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(border), 2f, ImDrawFlags.None, 1f);
@@ -5186,6 +5249,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private sealed class ComponentDllDialogState
     {
         public required GameInstance Game { get; init; }
+
+        public UpscalerDetectionResult? DetectionResult { get; set; }
     }
 
     private sealed class ConfigDialogState
@@ -5221,7 +5286,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private sealed record ShortcutCaptureKey(ImGuiKey ImGuiKey, int VirtualKey);
 
-    private sealed record ComponentDllEntry(string Label, string FileName, string Version, bool IsDetected);
+    private sealed record ComponentDllEntry(string Label, string FileName, string Version, bool IsDetected, string RelativePath);
 
     private sealed record InlinePillLayout(Vector2 Min, Vector2 Size);
 

@@ -21,6 +21,9 @@ public sealed class SteamAppInfoService
         "dedicated", "sdk", "mod", "legacy", "test", "safe mode"
     };
 
+    private readonly object _cacheLock = new();
+    private CachedAppInfoIndex? _cachedIndex;
+
     public SteamAppInfoIndex Load()
     {
         var appInfoPath = GetAppInfoPath();
@@ -31,8 +34,26 @@ public sealed class SteamAppInfoService
 
         try
         {
+            var fileInfo = new FileInfo(appInfoPath);
+            lock (_cacheLock)
+            {
+                if (_cachedIndex != null &&
+                    _cachedIndex.Path.Equals(appInfoPath, StringComparison.OrdinalIgnoreCase) &&
+                    _cachedIndex.Length == fileInfo.Length &&
+                    _cachedIndex.LastWriteTimeUtc == fileInfo.LastWriteTimeUtc)
+                {
+                    return _cachedIndex.Index;
+                }
+            }
+
             using var stream = File.Open(appInfoPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            return Parse(stream);
+            var index = Parse(stream);
+            lock (_cacheLock)
+            {
+                _cachedIndex = new CachedAppInfoIndex(appInfoPath, fileInfo.Length, fileInfo.LastWriteTimeUtc, index);
+            }
+
+            return index;
         }
         catch
         {
@@ -376,6 +397,8 @@ public sealed class SteamAppInfoService
         }
     }
 }
+
+internal sealed record CachedAppInfoIndex(string Path, long Length, DateTime LastWriteTimeUtc, SteamAppInfoIndex Index);
 
 public sealed class SteamAppInfoIndex
 {

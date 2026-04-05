@@ -29,6 +29,18 @@ public partial class GameInstance : ObservableObject
     private string _antiCheatProvider = string.Empty;
 
     [ObservableProperty]
+    private bool _isAntiCheatDetectionPending;
+
+    [ObservableProperty]
+    private bool _hasSupportedUpscalers;
+
+    [ObservableProperty]
+    private string _upscalerSummary = string.Empty;
+
+    [ObservableProperty]
+    private bool _isUpscalerDetectionPending;
+
+    [ObservableProperty]
     private string _scanSource = string.Empty;
 
     [ObservableProperty]

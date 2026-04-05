@@ -83,10 +83,13 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     private readonly OptiScalerService _optiScalerService;
     private readonly AntiCheatDetectionService _antiCheatDetectionService;
+    private readonly UpscalerDetectionService _upscalerDetectionService;
     private readonly VersionService _versionService;
     private readonly ConfigurationService _configService;
     private readonly GameScannerService _gameScannerService;
     private readonly SemaphoreSlim _versionRefreshLock = new(1, 1);
+    private readonly SemaphoreSlim _libraryLoadLock = new(1, 1);
+    private int _libraryLoadVersion;
 
     [ObservableProperty]
     private ObservableCollection<GameInstance> _games = new();
@@ -106,6 +109,21 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
     [ObservableProperty]
     private bool _enableSpoofing = true;
 
+    [ObservableProperty]
+    private bool _isLoadingLibrary;
+
+    [ObservableProperty]
+    private bool _isScanningInstalledGames;
+
+    [ObservableProperty]
+    private bool _isRefreshingAntiCheat;
+
+    [ObservableProperty]
+    private bool _isRefreshingUpscalerDetection;
+
+    [ObservableProperty]
+    private string _libraryStatus = string.Empty;
+
     public List<string> TargetFilenames { get; } = new()
     {
         "dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll",
@@ -116,6 +134,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
     {
         _optiScalerService = new OptiScalerService();
         _antiCheatDetectionService = new AntiCheatDetectionService();
+        _upscalerDetectionService = new UpscalerDetectionService();
         _versionService = new VersionService();
         _configService = new ConfigurationService();
         _gameScannerService = new GameScannerService();
@@ -125,7 +144,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     public void Receive(VersionsChangedMessage message)
     {
-        SafeFireAndForget(RefreshVersions());
+        SafeFireAndForget(RefreshDownloadedVersionsAsync());
     }
 
     private async void SafeFireAndForget(Task task)
@@ -142,35 +161,97 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     public async Task InitializeAsync()
     {
-        await Task.WhenAll(
-            _configService.LoadAsync(),
-            _antiCheatDetectionService.InitializeAsync());
-        await NormalizeSavedGamePathsAsync();
-        await RefreshVersions();
-        await LoadGamesAsync();
+        var loadVersion = Interlocked.Increment(ref _libraryLoadVersion);
+        await _libraryLoadLock.WaitAsync();
+        try
+        {
+            IsRefreshingAntiCheat = false;
+            IsRefreshingUpscalerDetection = false;
+            SetLibraryLoadState(isLoading: true, isScanning: false, status: "Loading saved games...");
+
+            await _configService.LoadAsync();
+            await RefreshDownloadedVersionsAsync();
+
+            if (!IsCurrentLibraryLoad(loadVersion))
+            {
+                return;
+            }
+
+            var preferredSelectedGamePath = GetSelectedGamePath();
+            var savedGames = LoadSavedGames();
+            ReplaceGames(savedGames, preferredSelectedGamePath);
+
+            SetLibraryLoadState(
+                isLoading: true,
+                isScanning: true,
+                status: savedGames.Count == 0
+                    ? "Scanning installed games..."
+                    : $"Loaded {savedGames.Count} saved game{(savedGames.Count == 1 ? string.Empty : "s")}. Scanning installed games...");
+
+            var scannedGames = await Task.Run(() => LoadAutoDetectedGames(savedGames));
+            if (!IsCurrentLibraryLoad(loadVersion))
+            {
+                return;
+            }
+
+            if (scannedGames.Count > 0)
+            {
+                ReplaceGames(savedGames.Concat(scannedGames).ToList(), preferredSelectedGamePath);
+            }
+
+            SetLibraryLoadState(isLoading: false, isScanning: false, status: string.Empty);
+            SafeFireAndForget(NormalizeSavedGamePathsAsync());
+            SafeFireAndForget(RefreshUpscalerDetectionAsync(loadVersion));
+            SafeFireAndForget(RefreshAntiCheatAsync(loadVersion));
+        }
+        finally
+        {
+            if (IsCurrentLibraryLoad(loadVersion))
+            {
+                SetLibraryLoadState(isLoading: false, isScanning: false, status: string.Empty);
+            }
+
+            _libraryLoadLock.Release();
+        }
     }
 
-    private async Task LoadGamesAsync()
+    private List<GameInstance> LoadSavedGames()
     {
-        Games.Clear();
-
+        var games = new List<GameInstance>();
         var gamePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var savedGame in GetSavedGames())
         {
-            if (Directory.Exists(savedGame.GamePath))
+            var savedGamePath = savedGame.GamePath;
+            if (!Directory.Exists(savedGamePath) &&
+                !string.IsNullOrWhiteSpace(savedGame.ExecutablePath) &&
+                File.Exists(savedGame.ExecutablePath))
             {
-                var game = CreateGameInternal(savedGame.GamePath, savedGame.ExecutablePath);
+                savedGamePath = Path.GetDirectoryName(Path.GetFullPath(savedGame.ExecutablePath)) ?? savedGamePath;
+            }
+
+            if (Directory.Exists(savedGamePath))
+            {
+                var game = CreateGameInternal(savedGamePath, savedGame.ExecutablePath);
                 if (game == null || !gamePaths.Add(game.GamePath))
                 {
                     continue;
                 }
 
-                Games.Add(game);
+                games.Add(game);
             }
         }
 
+        return games;
+    }
+
+    private List<GameInstance> LoadAutoDetectedGames(IEnumerable<GameInstance> existingGames)
+    {
         var hiddenScannedGamePaths = GetHiddenScannedGamePaths();
-        var scannedGames = await Task.Run(() => _gameScannerService.ScanInstalledGames());
+        var gamePaths = existingGames
+            .Select(game => game.GamePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var games = new List<GameInstance>();
+        var scannedGames = _gameScannerService.ScanInstalledGames();
         foreach (var scannedGame in scannedGames)
         {
             var game = CreateGameInternal(
@@ -187,8 +268,17 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
                 continue;
             }
 
-            Games.Add(game);
+            var upscalerDetection = _upscalerDetectionService.Detect(game.GamePath);
+            ApplyUpscalerDetection(game, upscalerDetection);
+            if (!upscalerDetection.HasSupportedComponents)
+            {
+                continue;
+            }
+
+            games.Add(game);
         }
+
+        return games;
     }
 
     private bool IsSupportedAutoScannedGame(GameInstance game)
@@ -202,15 +292,15 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         return _optiScalerService.IsSupportedExecutableArchitecture(executablePath);
     }
 
-    private async Task RefreshVersions()
+    private async Task RefreshDownloadedVersionsAsync()
     {
         await _versionRefreshLock.WaitAsync();
         try
         {
             DownloadedVersions.Clear();
-            var allVersions = await _versionService.GetAvailableVersionsAsync();
+            var downloadedVersions = await Task.Run(() => _versionService.GetDownloadedVersions());
 
-            foreach (var version in allVersions.Where(v => v.IsDownloaded))
+            foreach (var version in downloadedVersions)
             {
                 DownloadedVersions.Add(version);
             }
@@ -227,6 +317,143 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         {
             _versionRefreshLock.Release();
         }
+    }
+
+    private void SetLibraryLoadState(bool isLoading, bool isScanning, string status)
+    {
+        IsLoadingLibrary = isLoading;
+        IsScanningInstalledGames = isScanning;
+        LibraryStatus = status;
+    }
+
+    private bool IsCurrentLibraryLoad(int loadVersion)
+    {
+        return loadVersion == Volatile.Read(ref _libraryLoadVersion);
+    }
+
+    private string? GetSelectedGamePath()
+    {
+        if (SelectedGame == null || string.IsNullOrWhiteSpace(SelectedGame.GamePath))
+        {
+            return null;
+        }
+
+        return NormalizeGamePath(SelectedGame.GamePath);
+    }
+
+    private void ReplaceGames(IReadOnlyList<GameInstance> games, string? preferredSelectedGamePath)
+    {
+        Games = new ObservableCollection<GameInstance>(games);
+        SelectedGame = string.IsNullOrWhiteSpace(preferredSelectedGamePath)
+            ? null
+            : games.FirstOrDefault(game => game.GamePath.Equals(preferredSelectedGamePath, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task RefreshAntiCheatAsync(int loadVersion)
+    {
+        IsRefreshingAntiCheat = true;
+        try
+        {
+            await _antiCheatDetectionService.InitializeAsync();
+            if (!IsCurrentLibraryLoad(loadVersion))
+            {
+                return;
+            }
+
+            foreach (var game in Games.ToList())
+            {
+                game.AntiCheatProvider = _antiCheatDetectionService.Detect(game.GamePath, game.Name, game.ScanSource, game.ScanSourceId);
+                game.IsAntiCheatDetectionPending = false;
+            }
+        }
+        finally
+        {
+            if (IsCurrentLibraryLoad(loadVersion))
+            {
+                IsRefreshingAntiCheat = false;
+            }
+        }
+    }
+
+    private async Task RefreshUpscalerDetectionAsync(int loadVersion)
+    {
+        IsRefreshingUpscalerDetection = true;
+        try
+        {
+            foreach (var game in Games.ToList())
+            {
+                if (!IsCurrentLibraryLoad(loadVersion))
+                {
+                    return;
+                }
+
+                var result = await Task.Run(() => _upscalerDetectionService.Detect(game.GamePath));
+                ApplyUpscalerDetection(game, result);
+            }
+        }
+        finally
+        {
+            if (IsCurrentLibraryLoad(loadVersion))
+            {
+                IsRefreshingUpscalerDetection = false;
+            }
+        }
+    }
+
+    private void QueueAntiCheatRefresh(GameInstance game)
+    {
+        game.AntiCheatProvider = string.Empty;
+        game.IsAntiCheatDetectionPending = true;
+        SafeFireAndForget(RefreshAntiCheatAsync(game));
+    }
+
+    private void QueueUpscalerDetectionRefresh(GameInstance game)
+    {
+        _upscalerDetectionService.Invalidate(game.GamePath);
+        game.HasSupportedUpscalers = false;
+        game.UpscalerSummary = string.Empty;
+        game.IsUpscalerDetectionPending = true;
+        SafeFireAndForget(RefreshUpscalerDetectionAsync(game));
+    }
+
+    private async Task RefreshAntiCheatAsync(GameInstance game)
+    {
+        try
+        {
+            await _antiCheatDetectionService.InitializeAsync();
+            game.AntiCheatProvider = _antiCheatDetectionService.Detect(game.GamePath, game.Name, game.ScanSource, game.ScanSourceId);
+        }
+        finally
+        {
+            game.IsAntiCheatDetectionPending = false;
+        }
+    }
+
+    private async Task RefreshUpscalerDetectionAsync(GameInstance game)
+    {
+        try
+        {
+            var result = await Task.Run(() => _upscalerDetectionService.Detect(game.GamePath, forceRefresh: true));
+            ApplyUpscalerDetection(game, result);
+        }
+        finally
+        {
+            game.IsUpscalerDetectionPending = false;
+        }
+    }
+
+    private static void ApplyUpscalerDetection(GameInstance game, UpscalerDetectionResult result)
+    {
+        game.HasSupportedUpscalers = result.HasSupportedComponents;
+        game.UpscalerSummary = result.Summary;
+        game.IsUpscalerDetectionPending = false;
+    }
+
+    public UpscalerDetectionResult GetUpscalerDetection(GameInstance game, bool forceRefresh = false)
+    {
+        var result = _upscalerDetectionService.Detect(game.GamePath, forceRefresh);
+        ApplyUpscalerDetection(game, result);
+        return result;
     }
 
     public async Task<GameInstance?> AddGameFromExecutable(string rawExecutablePath)
@@ -281,6 +508,9 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             await _configService.SaveAsync();
         }
 
+        QueueUpscalerDetectionRefresh(game);
+        QueueAntiCheatRefresh(game);
+
         return game;
     }
 
@@ -321,7 +551,11 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             Name = displayName,
             GamePath = effectiveGamePath,
             ExecutableName = resolvedExecutablePath == null ? string.Empty : Path.GetFileName(resolvedExecutablePath),
-            AntiCheatProvider = _antiCheatDetectionService.Detect(effectiveGamePath, displayName, scanSource, scanSourceId),
+            HasSupportedUpscalers = false,
+            UpscalerSummary = string.Empty,
+            IsUpscalerDetectionPending = true,
+            AntiCheatProvider = string.Empty,
+            IsAntiCheatDetectionPending = true,
             ScanSource = scanSource ?? string.Empty,
             ScanSourceId = scanSourceId ?? string.Empty,
         };
@@ -372,39 +606,41 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         try
         {
             var expectedNames = GetExpectedExecutableNames(gamePath, preferredDisplayName, preferredExecutablePathHint);
-            var executablePaths = EnumerateExecutableCandidates(gamePath)
+            var executableCandidates = EnumerateExecutableCandidates(gamePath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(CreateExecutableCandidateInfo)
                 .ToList();
-            if (executablePaths.Count == 0)
+            if (executableCandidates.Count == 0)
             {
                 return null;
             }
 
-            var sidecarExecutablePaths = executablePaths
-                .Where(path => HasKnownUpscalerSidecars(path))
+            var sidecarExecutablePaths = executableCandidates
+                .Where(candidate => candidate.SidecarCount > 0)
                 .ToList();
             if (sidecarExecutablePaths.Count > 0)
             {
-                executablePaths = sidecarExecutablePaths;
+                executableCandidates = sidecarExecutablePaths;
             }
 
-            var nonUtilityExecutablePaths = executablePaths
-                .Where(path => !LooksLikeIgnoredExecutable(path))
+            var nonUtilityExecutablePaths = executableCandidates
+                .Where(candidate => !candidate.IsIgnored)
                 .ToList();
             if (nonUtilityExecutablePaths.Count > 0)
             {
-                executablePaths = nonUtilityExecutablePaths;
+                executableCandidates = nonUtilityExecutablePaths;
             }
 
-            var largestExecutableSize = executablePaths
-                .Select(GetExecutableFileSize)
+            var largestExecutableSize = executableCandidates
+                .Select(candidate => candidate.FileSize)
                 .DefaultIfEmpty(0)
                 .Max();
 
-            return executablePaths
-                .OrderBy(path => GetExecutablePreference(path, gamePath, expectedNames, largestExecutableSize))
-                .ThenBy(path => GetRelativePathDepth(gamePath, path))
-                .ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+            return executableCandidates
+                .OrderBy(candidate => GetExecutablePreference(candidate, gamePath, expectedNames, largestExecutableSize))
+                .ThenBy(candidate => GetRelativePathDepth(gamePath, candidate.Path))
+                .ThenBy(candidate => Path.GetFileName(candidate.Path), StringComparer.OrdinalIgnoreCase)
+                .Select(candidate => candidate.Path)
                 .FirstOrDefault();
         }
         catch
@@ -429,9 +665,10 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
         var searchRoot = GetExecutableSearchRoot(executableDirectory);
         var selectedExecutableName = Path.GetFileNameWithoutExtension(executablePath);
+        var selectedCandidate = CreateExecutableCandidateInfo(executablePath);
         if (string.Equals(searchRoot, executableDirectory, StringComparison.OrdinalIgnoreCase) &&
-            !LooksLikeIgnoredExecutable(executablePath) &&
-            !HasGenericExecutableMetadata(executablePath))
+            !selectedCandidate.IsIgnored &&
+            !selectedCandidate.HasGenericMetadata)
         {
             return executablePath;
         }
@@ -583,11 +820,11 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         return 1;
     }
 
-    private static int GetExecutablePreference(string executablePath, string gamePath, IReadOnlyCollection<string> expectedNames, long largestExecutableSize)
+    private static int GetExecutablePreference(ExecutableCandidateInfo candidate, string gamePath, IReadOnlyCollection<string> expectedNames, long largestExecutableSize)
     {
-        var executableName = Path.GetFileNameWithoutExtension(executablePath);
-        var cleanedExecutableName = CleanGameName(executableName);
-        var score = 4000 + (GetRelativePathDepth(gamePath, executablePath) * 100);
+        var executableName = candidate.ExecutableName;
+        var cleanedExecutableName = candidate.CleanedName;
+        var score = 4000 + (GetRelativePathDepth(gamePath, candidate.Path) * 100);
 
         if (MatchesExpectedNameExactly(cleanedExecutableName, expectedNames))
         {
@@ -619,21 +856,21 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             score -= 800;
         }
 
-        score -= GetExecutableDirectoryBonus(gamePath, executablePath);
-        score -= GetSidecarUpscalerBonus(executablePath);
-        score += GetExecutableSizeAdjustment(executablePath, largestExecutableSize);
+        score -= GetExecutableDirectoryBonus(gamePath, candidate.Path);
+        score -= GetSidecarUpscalerBonus(candidate.SidecarCount);
+        score += GetExecutableSizeAdjustment(candidate.FileSize, largestExecutableSize);
 
-        if (MatchesExecutableMetadata(executablePath, expectedNames))
+        if (MatchesExecutableMetadata(candidate, expectedNames))
         {
             score -= 500;
         }
 
-        if (HasGenericExecutableMetadata(executablePath))
+        if (candidate.HasGenericMetadata)
         {
             score += 1200;
         }
 
-        if (LooksLikeIgnoredExecutable(executablePath))
+        if (candidate.IsIgnored)
         {
             score += 2500;
         }
@@ -641,9 +878,8 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         return score;
     }
 
-    private static int GetExecutableSizeAdjustment(string executablePath, long largestExecutableSize)
+    private static int GetExecutableSizeAdjustment(long fileSize, long largestExecutableSize)
     {
-        var fileSize = GetExecutableFileSize(executablePath);
         if (fileSize <= 0 || largestExecutableSize <= 0)
         {
             return 0;
@@ -735,9 +971,9 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         return 0;
     }
 
-    private static int GetSidecarUpscalerBonus(string executablePath)
+    private static int GetSidecarUpscalerBonus(int sidecarCount)
     {
-        return GetKnownUpscalerSidecarCount(executablePath) switch
+        return sidecarCount switch
         {
             >= 3 => 1800,
             2 => 1300,
@@ -789,36 +1025,21 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             candidateName.Contains(expectedName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static bool MatchesExecutableMetadata(string executablePath, IReadOnlyCollection<string> expectedNames)
+    private static bool MatchesExecutableMetadata(ExecutableCandidateInfo candidate, IReadOnlyCollection<string> expectedNames)
     {
-        var metadataName = TryGetExecutableMetadataName(executablePath);
-        if (string.IsNullOrWhiteSpace(metadataName))
+        if (string.IsNullOrWhiteSpace(candidate.MetadataName))
         {
             return false;
         }
 
-        return MatchesExpectedNameExactly(metadataName, expectedNames) ||
-               StartsWithExpectedName(metadataName, expectedNames) ||
-               ContainsExpectedName(metadataName, expectedNames);
+        return MatchesExpectedNameExactly(candidate.MetadataName, expectedNames) ||
+               StartsWithExpectedName(candidate.MetadataName, expectedNames) ||
+               ContainsExpectedName(candidate.MetadataName, expectedNames);
     }
 
     private static bool HasGenericExecutableMetadata(string executablePath)
     {
-        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
-        {
-            return false;
-        }
-
-        try
-        {
-            var info = FileVersionInfo.GetVersionInfo(executablePath);
-            return IsGenericExecutableMetadata(info.ProductName ?? string.Empty) ||
-                   IsGenericExecutableMetadata(info.FileDescription ?? string.Empty);
-        }
-        catch
-        {
-            return false;
-        }
+        return ReadExecutableMetadataInfo(executablePath).HasGenericMetadata;
     }
 
     private static bool LooksLikeIgnoredExecutable(string executablePath)
@@ -827,13 +1048,18 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             ? Path.GetFileNameWithoutExtension(executablePath)
             : executablePath;
 
+        return LooksLikeIgnoredExecutable(executableName, ReadExecutableMetadataInfo(executablePath).Values);
+    }
+
+    private static bool LooksLikeIgnoredExecutable(string executableName, IReadOnlyList<string> metadataValues)
+    {
         if (IgnoredExecutableNameTokens.Any(token =>
                 executableName.Contains(token, StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }
 
-        foreach (var metadataValue in GetExecutableMetadataValues(executablePath))
+        foreach (var metadataValue in metadataValues)
         {
             if (IgnoredExecutableMetadataTokens.Any(token =>
                     metadataValue.Contains(token, StringComparison.OrdinalIgnoreCase)))
@@ -847,31 +1073,72 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     private static IEnumerable<string> GetExecutableMetadataValues(string executablePath)
     {
+        foreach (var value in ReadExecutableMetadataInfo(executablePath).Values)
+        {
+            yield return value;
+        }
+    }
+
+    private static ExecutableCandidateInfo CreateExecutableCandidateInfo(string executablePath)
+    {
+        var fullPath = Path.GetFullPath(executablePath);
+        var executableName = Path.GetFileNameWithoutExtension(fullPath);
+        var metadataInfo = ReadExecutableMetadataInfo(fullPath);
+        return new ExecutableCandidateInfo(
+            fullPath,
+            executableName,
+            CleanGameName(executableName),
+            metadataInfo.Name,
+            metadataInfo.HasGenericMetadata,
+            LooksLikeIgnoredExecutable(executableName, metadataInfo.Values),
+            GetExecutableFileSize(fullPath),
+            GetKnownUpscalerSidecarCount(fullPath));
+    }
+
+    private static ExecutableMetadataInfo ReadExecutableMetadataInfo(string? executablePath)
+    {
         if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
         {
-            yield break;
+            return ExecutableMetadataInfo.Empty;
         }
 
-        FileVersionInfo? info = null;
         try
         {
-            info = FileVersionInfo.GetVersionInfo(executablePath);
+            var info = FileVersionInfo.GetVersionInfo(executablePath);
+            var values = new List<string>(capacity: 4);
+            foreach (var value in new[] { info.ProductName, info.FileDescription, info.InternalName, info.OriginalFilename })
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    values.Add(value.Trim());
+                }
+            }
+
+            string? metadataName = null;
+            foreach (var candidate in new[] { info.ProductName, info.FileDescription })
+            {
+                if (LooksLikeUnreadableMetadata(candidate))
+                {
+                    continue;
+                }
+
+                var cleanedCandidate = CleanGameName(candidate ?? string.Empty);
+                if (string.IsNullOrWhiteSpace(cleanedCandidate) || IsGenericExecutableMetadata(cleanedCandidate))
+                {
+                    continue;
+                }
+
+                metadataName = cleanedCandidate;
+                break;
+            }
+
+            var hasGenericMetadata = IsGenericExecutableMetadata(info.ProductName ?? string.Empty) ||
+                                     IsGenericExecutableMetadata(info.FileDescription ?? string.Empty);
+            return new ExecutableMetadataInfo(metadataName, hasGenericMetadata, values);
         }
         catch
         {
-        }
-
-        if (info == null)
-        {
-            yield break;
-        }
-
-        foreach (var value in new[] { info.ProductName, info.FileDescription, info.InternalName, info.OriginalFilename })
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                yield return value.Trim();
-            }
+            return ExecutableMetadataInfo.Empty;
         }
     }
 
@@ -926,35 +1193,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     private static string? TryGetExecutableMetadataName(string? executablePath)
     {
-        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
-        {
-            return null;
-        }
-
-        try
-        {
-            var info = FileVersionInfo.GetVersionInfo(executablePath);
-            foreach (var candidate in new[] { info.ProductName, info.FileDescription })
-            {
-                if (LooksLikeUnreadableMetadata(candidate))
-                {
-                    continue;
-                }
-
-                var cleanedCandidate = CleanGameName(candidate ?? string.Empty);
-                if (string.IsNullOrWhiteSpace(cleanedCandidate) || IsGenericExecutableMetadata(cleanedCandidate))
-                {
-                    continue;
-                }
-
-                return cleanedCandidate;
-            }
-        }
-        catch
-        {
-        }
-
-        return null;
+        return ReadExecutableMetadataInfo(executablePath).Name;
     }
 
     private static bool LooksLikeUnreadableMetadata(string? value)
@@ -998,6 +1237,21 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim();
 
         return cleaned;
+    }
+
+    private sealed record ExecutableCandidateInfo(
+        string Path,
+        string ExecutableName,
+        string CleanedName,
+        string? MetadataName,
+        bool HasGenericMetadata,
+        bool IsIgnored,
+        long FileSize,
+        int SidecarCount);
+
+    private sealed record ExecutableMetadataInfo(string? Name, bool HasGenericMetadata, IReadOnlyList<string> Values)
+    {
+        public static ExecutableMetadataInfo Empty { get; } = new(null, false, Array.Empty<string>());
     }
 
     public InstallationWizardViewModel CreateInstallationWizard(GameInstance game)
@@ -1051,8 +1305,9 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         game.GamePath = normalizedPath;
         game.ExecutableName = Path.GetFileName(normalizedExecutablePath);
         game.Name = ResolveGameDisplayName(normalizedPath, normalizedExecutablePath);
-        game.AntiCheatProvider = _antiCheatDetectionService.Detect(normalizedPath, game.Name, game.ScanSource, game.ScanSourceId);
         RefreshGameInstallation(game);
+        QueueUpscalerDetectionRefresh(game);
+        QueueAntiCheatRefresh(game);
 
         var savedGames = GetSavedGames();
         var savedIndex = savedGames.FindIndex(saved =>

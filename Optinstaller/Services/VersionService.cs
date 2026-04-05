@@ -128,6 +128,44 @@ public class VersionService
             .ToList();
     }
 
+    public List<OptiScalerVersion> GetDownloadedVersions()
+    {
+        var versions = new List<OptiScalerVersion>();
+        if (!Directory.Exists(_versionsDirectory))
+        {
+            return versions;
+        }
+
+        foreach (var dir in Directory.GetDirectories(_versionsDirectory))
+        {
+            var dirName = Path.GetFileName(dir);
+            if (!File.Exists(Path.Combine(dir, "OptiScaler.dll")))
+            {
+                continue;
+            }
+
+            var source = dirName.Contains("bleeding", StringComparison.OrdinalIgnoreCase) ||
+                         dirName.Contains("edge", StringComparison.OrdinalIgnoreCase)
+                ? "BleedingEdge"
+                : "Official";
+
+            versions.Add(new OptiScalerVersion
+            {
+                Name = dirName,
+                TagName = dirName,
+                Description = "Locally installed version",
+                PublishedAt = Directory.GetCreationTimeUtc(dir),
+                IsDownloaded = true,
+                LocalPath = dir,
+                Source = source,
+            });
+        }
+
+        return versions
+            .OrderByDescending(v => v.PublishedAt)
+            .ToList();
+    }
+
     private void CheckLocalStatus(OptiScalerVersion version)
     {
         var folderName = version.TagName;
