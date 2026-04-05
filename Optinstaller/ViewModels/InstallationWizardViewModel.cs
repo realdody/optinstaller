@@ -207,46 +207,10 @@ public partial class InstallationWizardViewModel : ViewModelBase
             return;
         }
 
-        bool foundNvidia = false;
-        
-        await Task.Run(() =>
-        {
-            try
-            {
-                if (OperatingSystem.IsWindows())
-                {
-                    var searcher = new System.Management.ManagementObjectSearcher("SELECT * FROM Win32_VideoController");
-                    foreach (var obj in searcher.Get())
-                    {
-                        var name = obj["Name"]?.ToString() ?? "";
-                        if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
-                        {
-                            foundNvidia = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // Fallback to nvapi check
-                var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
-                if (File.Exists(Path.Combine(system32, "nvapi64.dll"))) foundNvidia = true;
-            }
-        });
-
-        if (foundNvidia)
-        {
-            IsNvidia = true;
-            GpuName = "Nvidia GPU Detected";
-            EnableSpoofing = true;
-        }
-        else
-        {
-            IsNvidia = false;
-            GpuName = "AMD/Intel GPU Detected";
-            EnableSpoofing = true;
-        }
+        var detectedGpu = await Task.Run(() => GpuDetectionService.Detect());
+        IsNvidia = detectedGpu.HasNvidia;
+        GpuName = detectedGpu.Summary;
+        EnableSpoofing = true;
     }
 
     [RelayCommand]

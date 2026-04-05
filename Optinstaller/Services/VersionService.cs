@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Optinstaller.Models;
@@ -14,6 +16,7 @@ namespace Optinstaller.Services;
 
 public class VersionService
 {
+    private static readonly Regex VersionTagPattern = new(@"\bv?(\d+(?:\.\d+)+(?:-[A-Za-z0-9.-]+)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly HttpClient SharedHttpClient = CreateHttpClient();
     private readonly string[] _gitHubApiUrls = 
     {
@@ -245,15 +248,8 @@ public class VersionService
 
             // Extract archive using SharpSevenZip (handles both .zip and .7z)
             await ExtractArchiveAsync(tempFile, tempDestDirFullPath);
-            
-            // Flatten nested folders (sometimes archives have a single root folder)
-            FlattenNestedFolders(tempDestDir);
 
-            // Validate that we have the expected OptiScaler.dll
-            if (!File.Exists(Path.Combine(tempDestDir, "OptiScaler.dll")))
-            {
-                throw new InvalidOperationException("Archive does not contain OptiScaler.dll at root level.");
-            }
+            PrepareExtractedVersionDirectory(tempDestDir);
 
             // Move to final destination (atomic-ish operation)
             if (Directory.Exists(destDir))
@@ -280,6 +276,54 @@ public class VersionService
             {
                 try { File.Delete(tempFile); } catch { /* ignore cleanup errors */ }
             }
+        }
+    }
+
+    public async Task<string> ImportVersionArchiveAsync(string archivePath)
+    {
+        if (string.IsNullOrWhiteSpace(archivePath))
+        {
+            throw new ArgumentException("Choose a .zip or .7z archive to import.", nameof(archivePath));
+        }
+
+        var fullArchivePath = Path.GetFullPath(archivePath);
+        if (!File.Exists(fullArchivePath))
+        {
+            throw new FileNotFoundException("The selected archive could not be found.", fullArchivePath);
+        }
+
+        var extension = Path.GetExtension(fullArchivePath);
+        if (!extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) &&
+            !extension.Equals(".7z", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Only .zip and .7z OptiScaler archives can be imported.");
+        }
+
+        var tempDestDir = Path.Combine(_versionsDirectory, $".import_{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(tempDestDir);
+            await ExtractArchiveAsync(fullArchivePath, Path.GetFullPath(tempDestDir));
+            PrepareExtractedVersionDirectory(tempDestDir);
+
+            var importedTagName = ResolveImportedVersionTagName(fullArchivePath, tempDestDir);
+            var destinationDirectory = Path.Combine(_versionsDirectory, importedTagName);
+            if (Directory.Exists(destinationDirectory))
+            {
+                Directory.Delete(destinationDirectory, true);
+            }
+
+            Directory.Move(tempDestDir, destinationDirectory);
+            return importedTagName;
+        }
+        catch
+        {
+            if (Directory.Exists(tempDestDir))
+            {
+                try { Directory.Delete(tempDestDir, true); } catch { /* ignore cleanup errors */ }
+            }
+
+            throw;
         }
     }
 
@@ -395,6 +439,79 @@ public class VersionService
                fullPath.Equals(fullDir, comparison);
     }
 
+    private static void PrepareExtractedVersionDirectory(string destDir)
+    {
+        FlattenNestedFolders(destDir);
+        PromoteNestedOptiScalerDirectory(destDir);
+        ValidateExtractedVersionDirectory(destDir);
+    }
+
+    private static void ValidateExtractedVersionDirectory(string destDir)
+    {
+        if (!File.Exists(Path.Combine(destDir, "OptiScaler.dll")))
+        {
+            throw new InvalidOperationException("Archive does not contain OptiScaler.dll at the expected root level.");
+        }
+    }
+
+    private static void PromoteNestedOptiScalerDirectory(string destDir)
+    {
+        if (File.Exists(Path.Combine(destDir, "OptiScaler.dll")))
+        {
+            return;
+        }
+
+        string[] candidateDllPaths;
+        try
+        {
+            candidateDllPaths = Directory.GetFiles(destDir, "OptiScaler.dll", SearchOption.AllDirectories);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (candidateDllPaths.Length != 1)
+        {
+            return;
+        }
+
+        var nestedDirectory = Path.GetDirectoryName(candidateDllPaths[0]);
+        if (string.IsNullOrWhiteSpace(nestedDirectory) ||
+            Path.GetFullPath(nestedDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Equals(Path.GetFullPath(destDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.GetFiles(nestedDirectory))
+        {
+            var destinationFile = Path.Combine(destDir, Path.GetFileName(file));
+            if (File.Exists(destinationFile))
+            {
+                File.Delete(destinationFile);
+            }
+
+            File.Move(file, destinationFile);
+        }
+
+        foreach (var directory in Directory.GetDirectories(nestedDirectory))
+        {
+            var destinationSubDirectory = Path.Combine(destDir, Path.GetFileName(directory));
+            if (Directory.Exists(destinationSubDirectory))
+            {
+                MergeDirectoriesStatic(directory, destinationSubDirectory);
+                Directory.Delete(directory, true);
+            }
+            else
+            {
+                Directory.Move(directory, destinationSubDirectory);
+            }
+        }
+
+        TryDeleteEmptyDirectoryChain(nestedDirectory, destDir);
+    }
+
     private static void FlattenNestedFolders(string destDir)
     {
         var subDirs = Directory.GetDirectories(destDir);
@@ -435,6 +552,117 @@ public class VersionService
             subDirs = Directory.GetDirectories(destDir);
             files = Directory.GetFiles(destDir);
         }
+    }
+
+    private static void TryDeleteEmptyDirectoryChain(string directoryPath, string stopDirectory)
+    {
+        var stopFullPath = Path.GetFullPath(stopDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var currentDirectory = new DirectoryInfo(directoryPath);
+
+        while (currentDirectory.Exists)
+        {
+            var currentFullPath = currentDirectory.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (currentFullPath.Equals(stopFullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            if (currentDirectory.EnumerateFileSystemInfos().Any())
+            {
+                break;
+            }
+
+            var parentDirectory = currentDirectory.Parent;
+            currentDirectory.Delete();
+            if (parentDirectory == null)
+            {
+                break;
+            }
+
+            currentDirectory = parentDirectory;
+        }
+    }
+
+    private static string ResolveImportedVersionTagName(string archivePath, string extractedDirectory)
+    {
+        var archiveFileName = Path.GetFileNameWithoutExtension(archivePath) ?? string.Empty;
+        var hasBleedingEdgeHint = archiveFileName.Contains("bleeding", StringComparison.OrdinalIgnoreCase) ||
+                                  archiveFileName.Contains("edge", StringComparison.OrdinalIgnoreCase);
+
+        var versionFromArchiveName = ExtractVersionTag(archiveFileName, hasBleedingEdgeHint);
+        if (!string.IsNullOrWhiteSpace(versionFromArchiveName))
+        {
+            return versionFromArchiveName;
+        }
+
+        var dllPath = Path.Combine(extractedDirectory, "OptiScaler.dll");
+        var versionFromDll = TryReadVersionTagFromDll(dllPath, hasBleedingEdgeHint);
+        if (!string.IsNullOrWhiteSpace(versionFromDll))
+        {
+            return versionFromDll;
+        }
+
+        var sanitizedArchiveName = SanitizeVersionDirectoryName(archiveFileName);
+        if (!string.IsNullOrWhiteSpace(sanitizedArchiveName))
+        {
+            return sanitizedArchiveName;
+        }
+
+        return $"imported-{DateTime.UtcNow:yyyyMMdd-HHmmss}";
+    }
+
+    private static string? TryReadVersionTagFromDll(string dllPath, bool hasBleedingEdgeHint)
+    {
+        if (!File.Exists(dllPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var info = FileVersionInfo.GetVersionInfo(dllPath);
+            return ExtractVersionTag(info.ProductVersion, hasBleedingEdgeHint) ??
+                   ExtractVersionTag(info.FileVersion, hasBleedingEdgeHint);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ExtractVersionTag(string? value, bool hasBleedingEdgeHint)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var match = VersionTagPattern.Match(value);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var versionValue = $"v{match.Groups[1].Value}";
+        return hasBleedingEdgeHint ? $"bleeding-edge-{versionValue}" : versionValue;
+    }
+
+    private static string SanitizeVersionDirectoryName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var sanitized = value.Trim();
+        foreach (var invalidCharacter in Path.GetInvalidFileNameChars())
+        {
+            sanitized = sanitized.Replace(invalidCharacter, '-');
+        }
+
+        sanitized = Regex.Replace(sanitized, @"\s+", "-");
+        sanitized = Regex.Replace(sanitized, @"-+", "-").Trim('-');
+        return sanitized;
     }
 
     private static void MergeDirectoriesStatic(string sourceDir, string destDir)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using GameFinder.Common;
 using GameFinder.RegistryUtils;
 using GameFinder.StoreHandlers.EADesktop;
@@ -190,14 +191,14 @@ public sealed class GameScannerService
 
             foreach (var scanRoot in GetWatchedLibraryScanRoots(normalizedLibraryPath))
             {
-                foreach (var candidatePath in EnumerateWatchedLibraryCandidates(scanRoot))
+                foreach (var candidate in EnumerateWatchedLibraryCandidates(scanRoot, normalizedLibraryPath))
                 {
-                    if (!seenPaths.Add(candidatePath))
+                    if (!seenPaths.Add(candidate.InstallRootPath))
                     {
                         continue;
                     }
 
-                    yield return new ScannedGame(string.Empty, candidatePath, "Watched Folder", normalizedLibraryPath);
+                    yield return candidate;
                 }
             }
         }
@@ -257,7 +258,7 @@ public sealed class GameScannerService
         yield return libraryPath;
     }
 
-    private static IEnumerable<string> EnumerateWatchedLibraryCandidates(string scanRoot)
+    private static IEnumerable<ScannedGame> EnumerateWatchedLibraryCandidates(string scanRoot, string watchedLibraryPath)
     {
         if (!Directory.Exists(scanRoot))
         {
@@ -266,23 +267,113 @@ public sealed class GameScannerService
 
         if (LooksLikeStandaloneGameDirectory(scanRoot))
         {
-            yield return scanRoot;
+            yield return new ScannedGame(string.Empty, scanRoot, "Watched Folder", watchedLibraryPath);
         }
 
         foreach (var childDirectory in EnumerateWatchedLibraryDirectories(scanRoot))
         {
-            yield return childDirectory;
-
             if (LooksLikeStandaloneGameDirectory(childDirectory))
             {
+                yield return new ScannedGame(string.Empty, childDirectory, "Watched Folder", watchedLibraryPath);
                 continue;
             }
 
-            foreach (var grandChildDirectory in EnumerateWatchedLibraryDirectories(childDirectory))
+            var grandChildDirectories = EnumerateWatchedLibraryDirectories(childDirectory).ToList();
+            if (TryGetWrappedWatchedGameDisplayName(childDirectory, grandChildDirectories, out var wrappedDisplayName))
             {
-                yield return grandChildDirectory;
+                yield return new ScannedGame(wrappedDisplayName, childDirectory, "Watched Folder", watchedLibraryPath);
+                continue;
+            }
+
+            foreach (var grandChildDirectory in grandChildDirectories)
+            {
+                yield return new ScannedGame(string.Empty, grandChildDirectory, "Watched Folder", watchedLibraryPath);
             }
         }
+    }
+
+    private static bool TryGetWrappedWatchedGameDisplayName(string parentDirectory, IReadOnlyList<string> childDirectories, out string displayName)
+    {
+        displayName = string.Empty;
+
+        if (childDirectories.Count != 1)
+        {
+            return false;
+        }
+
+        var wrappedDirectory = childDirectories[0];
+        if (!LooksLikeStandaloneGameDirectory(wrappedDirectory))
+        {
+            return false;
+        }
+
+        var parentDirectoryName = Path.GetFileName(parentDirectory);
+        var wrappedDirectoryName = Path.GetFileName(wrappedDirectory);
+        if (!ShouldPreferWrappedDirectoryDisplayName(parentDirectoryName, wrappedDirectoryName))
+        {
+            return false;
+        }
+
+        displayName = parentDirectoryName;
+        return true;
+    }
+
+    private static bool ShouldPreferWrappedDirectoryDisplayName(string? parentDirectoryName, string? wrappedDirectoryName)
+    {
+        var cleanedParentName = CleanDirectoryDisplayName(parentDirectoryName);
+        var cleanedWrappedName = CleanDirectoryDisplayName(wrappedDirectoryName);
+        if (string.IsNullOrWhiteSpace(cleanedParentName) ||
+            string.IsNullOrWhiteSpace(cleanedWrappedName) ||
+            cleanedParentName.Equals(cleanedWrappedName, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parentLooksTitleLike = RawDirectoryNameLooksTitleLike(parentDirectoryName ?? string.Empty);
+        var wrappedLooksCodeLike = RawDirectoryNameLooksCodeLike(wrappedDirectoryName ?? string.Empty);
+        return parentLooksTitleLike && wrappedLooksCodeLike;
+    }
+
+    private static bool RawDirectoryNameLooksTitleLike(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.IndexOfAny(new[] { ' ', '-', '_', ':', '\'' }) >= 0 ||
+               value.Any(char.IsDigit) ||
+               Regex.Matches(value, @"[A-Za-z0-9]+")
+                   .Count >= 2;
+    }
+
+    private static bool RawDirectoryNameLooksCodeLike(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.IndexOfAny(new[] { ' ', '-', '_', ':', '\'' }) < 0 &&
+               !value.Any(char.IsDigit) &&
+               Regex.Matches(value, @"[A-Za-z0-9]+")
+                   .Count <= 1;
+    }
+
+    private static string CleanDirectoryDisplayName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var cleaned = value.Trim();
+        cleaned = cleaned.Replace('_', ' ').Replace('-', ' ');
+        cleaned = Regex.Replace(cleaned, @"(?<=[A-Z])(?=[A-Z][a-z])", " ");
+        cleaned = Regex.Replace(cleaned, @"(?<=[a-z0-9])(?=[A-Z])", " ");
+        cleaned = Regex.Replace(cleaned, @"(?<=[A-Za-z])(?=[0-9])", " ");
+        cleaned = Regex.Replace(cleaned, @"(?<=[0-9])(?=[A-Za-z])", " ");
+        return Regex.Replace(cleaned, @"\s+", " ").Trim();
     }
 
     private static IEnumerable<string> EnumerateWatchedLibraryDirectories(string directoryPath)

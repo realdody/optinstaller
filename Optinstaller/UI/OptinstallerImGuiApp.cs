@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
-using System.Management;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -165,7 +164,14 @@ public sealed class OptinstallerImGuiApp : IDisposable
         new(ImGuiKey.Y, 'Y'),
         new(ImGuiKey.Z, 'Z'),
     };
-    private static string? _defaultDxgiConfigValue;
+    private static readonly FontLoadCandidate[] PreferredUnicodeFonts =
+    {
+        new("YuGothM.ttc", FontGlyphRange.Japanese),
+        new("YuGothR.ttc", FontGlyphRange.Japanese),
+        new("msgothic.ttc", FontGlyphRange.Japanese),
+        new("msyh.ttc", FontGlyphRange.ChineseSimplifiedCommon),
+        new("malgun.ttf", FontGlyphRange.Korean),
+    };
     private static readonly Win32Native.WndProcDelegate WindowProcedureDelegate = WindowProcedure;
     private static readonly string AppIconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "logo.ico");
     private static readonly object AppIconSync = new();
@@ -1786,6 +1792,12 @@ public sealed class OptinstallerImGuiApp : IDisposable
             StartUiTask(() => versions.LoadVersions(), "Could not refresh versions");
         }
 
+        ImGui.SameLine();
+        if (ImGui.Button("Import Archive", new Vector2(130f, 0f)))
+        {
+            PromptImportVersionArchive();
+        }
+
         if (versions.IsLoading)
         {
             ImGui.SameLine();
@@ -1817,7 +1829,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var listWidth = Math.Clamp(ImGui.GetContentRegionAvail().X * 0.38f, 300f, 430f);
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16f, 14f));
-        ImGui.BeginChild("VersionList", new Vector2(listWidth, 0f), PaddedPanelChildFlags, PanelWindowFlags);
+        ImGui.BeginChild("VersionList", new Vector2(listWidth, 0f), PaddedPanelChildFlags, ScrollablePanelWindowFlags);
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8f, 6f));
         RenderVersionListSection("Downloaded", versions.DownloadedVersions, selectedVersion);
         ImGui.Spacing();
@@ -2172,14 +2184,23 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private static void LoadFonts(ImGuiIOPtr io)
     {
+        var fontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
         var bundledHackFont = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "Hack-Regular.ttf");
-        if (File.Exists(bundledHackFont))
+        if (TryAddFont(io, bundledHackFont, GetGlyphRanges(io, FontGlyphRange.Default)))
         {
-            io.Fonts.AddFontFromFileTTF(bundledHackFont, 16f);
+            MergeFallbackFonts(io, fontsDirectory);
             return;
         }
 
-        var fontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+        foreach (var font in PreferredUnicodeFonts)
+        {
+            var fontPath = Path.Combine(fontsDirectory, font.FileName);
+            if (TryAddFont(io, fontPath, GetGlyphRanges(io, font.GlyphRange)))
+            {
+                return;
+            }
+        }
+
         var preferredFonts = new[]
         {
             "bahnschrift.ttf",
@@ -2191,14 +2212,65 @@ public sealed class OptinstallerImGuiApp : IDisposable
         foreach (var fontFile in preferredFonts)
         {
             var fontPath = Path.Combine(fontsDirectory, fontFile);
-            if (File.Exists(fontPath))
+            if (TryAddFont(io, fontPath, GetGlyphRanges(io, FontGlyphRange.Default)))
             {
-                io.Fonts.AddFontFromFileTTF(fontPath, 16f);
                 return;
             }
         }
 
         io.Fonts.AddFontDefault();
+    }
+
+    private static void MergeFallbackFonts(ImGuiIOPtr io, string fontsDirectory)
+    {
+        foreach (var font in PreferredUnicodeFonts)
+        {
+            var fontPath = Path.Combine(fontsDirectory, font.FileName);
+            TryMergeFont(io, fontPath, GetGlyphRanges(io, font.GlyphRange));
+        }
+    }
+
+    private static bool TryAddFont(ImGuiIOPtr io, string fontPath, IntPtr glyphRanges)
+    {
+        if (!File.Exists(fontPath))
+        {
+            return false;
+        }
+
+        io.Fonts.AddFontFromFileTTF(fontPath, 16f, default, glyphRanges);
+        return true;
+    }
+
+    private static unsafe bool TryMergeFont(ImGuiIOPtr io, string fontPath, IntPtr glyphRanges)
+    {
+        if (!File.Exists(fontPath))
+        {
+            return false;
+        }
+
+        var config = new ImFontConfigPtr(ImGuiNative.ImFontConfig_ImFontConfig());
+        try
+        {
+            config.MergeMode = true;
+            config.PixelSnapH = true;
+            io.Fonts.AddFontFromFileTTF(fontPath, 16f, config, glyphRanges);
+            return true;
+        }
+        finally
+        {
+            config.Destroy();
+        }
+    }
+
+    private static IntPtr GetGlyphRanges(ImGuiIOPtr io, FontGlyphRange glyphRange)
+    {
+        return glyphRange switch
+        {
+            FontGlyphRange.Japanese => io.Fonts.GetGlyphRangesJapanese(),
+            FontGlyphRange.ChineseSimplifiedCommon => io.Fonts.GetGlyphRangesChineseSimplifiedCommon(),
+            FontGlyphRange.Korean => io.Fonts.GetGlyphRangesKorean(),
+            _ => io.Fonts.GetGlyphRangesDefault(),
+        };
     }
 
     private static void ConfigureImGuiIo(ImGuiIOPtr io)
@@ -2640,6 +2712,25 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }, "Could not add the selected game");
     }
 
+    private void PromptImportVersionArchive()
+    {
+        var selectedPath = NativeDialogs.PickFile(
+            "Import OptiScaler Archive",
+            "Archive Files (*.zip;*.7z)|*.zip;*.7z|Zip Archives (*.zip)|*.zip|7-Zip Archives (*.7z)|*.7z|All Files (*.*)|*.*",
+            _hwnd);
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
+
+        StartUiTask(async () =>
+        {
+            var importedTag = await _mainViewModel.Versions.ImportVersionArchive(selectedPath);
+            _selectedVersionTag = importedTag;
+            SetNotification($"Imported {importedTag}.", NotificationKind.Success);
+        }, "Could not import the selected archive");
+    }
+
     private void PromptAddWatchedLibrary()
     {
         var selectedPath = NativeDialogs.PickFolder("Select Watched Library Folder", _hwnd);
@@ -2832,7 +2923,30 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private static string GetOptiScalerQuickPillText(GameInstance game)
     {
-        return $"OptiScaler {game.CurrentVersion}";
+        return $"OptiScaler {GetCompactOptiScalerVersionText(game.CurrentVersion)}";
+    }
+
+    private static string GetCompactOptiScalerVersionText(string? currentVersion)
+    {
+        if (string.IsNullOrWhiteSpace(currentVersion))
+        {
+            return "Unknown";
+        }
+
+        var trimmedVersion = currentVersion.Trim();
+        if (trimmedVersion.Equals("Not Installed", StringComparison.OrdinalIgnoreCase) ||
+            trimmedVersion.Equals("Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmedVersion;
+        }
+
+        var compactVersionMatch = Regex.Match(trimmedVersion, @"\bv?(\d+(?:\.\d+)+(?:-[A-Za-z0-9.-]+)?)\b", RegexOptions.CultureInvariant);
+        if (compactVersionMatch.Success)
+        {
+            return compactVersionMatch.Groups[1].Value;
+        }
+
+        return trimmedVersion;
     }
 
     private static string GetUpscalersFgQuickPillText()
@@ -5099,33 +5213,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private static string GetDefaultDxgiConfigValue()
     {
-        if (!string.IsNullOrWhiteSpace(_defaultDxgiConfigValue))
-        {
-            return _defaultDxgiConfigValue;
-        }
-
-        try
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_VideoController");
-                foreach (var obj in searcher.Get())
-                {
-                    var name = obj["Name"]?.ToString() ?? string.Empty;
-                    if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
-                    {
-                        _defaultDxgiConfigValue = "false";
-                        return _defaultDxgiConfigValue;
-                    }
-                }
-            }
-        }
-        catch
-        {
-        }
-
-        _defaultDxgiConfigValue = "true";
-        return _defaultDxgiConfigValue;
+        return GpuDetectionService.Detect().HasNvidia ? "false" : "true";
     }
 
     private static float GetConfigControlWidth(float maxWidth = 360f)
@@ -5626,6 +5714,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         public string? ShortcutKeyErrorMessage { get; set; }
     }
 
+    private sealed record FontLoadCandidate(string FileName, FontGlyphRange GlyphRange);
+
     private sealed record ConfigChoice(string Value, string Label);
 
     private sealed record ShortcutCaptureKey(ImGuiKey ImGuiKey, int VirtualKey);
@@ -5641,6 +5731,14 @@ public sealed class OptinstallerImGuiApp : IDisposable
         Dashboard,
         Versions,
         Settings,
+    }
+
+    private enum FontGlyphRange
+    {
+        Default,
+        Japanese,
+        ChineseSimplifiedCommon,
+        Korean,
     }
 
     private enum NotificationKind

@@ -201,6 +201,23 @@ public partial class VersionManagerViewModel : ViewModelBase
         }
     }
 
+    public async Task<string> ImportVersionArchive(string archivePath)
+    {
+        try
+        {
+            ErrorMessage = string.Empty;
+            var importedTag = await _versionService.ImportVersionArchiveAsync(archivePath);
+            await LoadVersions();
+            WeakReferenceMessenger.Default.Send(new VersionsChangedMessage(true));
+            return importedTag;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Import failed: {ex.Message}";
+            throw;
+        }
+    }
+
     [RelayCommand]
     public void OpenFolder(OptiScalerVersion version)
     {
