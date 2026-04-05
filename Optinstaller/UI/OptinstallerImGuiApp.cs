@@ -200,6 +200,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private string? _selectedGamePath;
     private string? _selectedVersionTag;
     private readonly Dictionary<string, float> _animationValues = new();
+    private readonly HashSet<string> _bulkSelectedGamePaths = new(StringComparer.OrdinalIgnoreCase);
     private float _uiTime;
 
     private ConfirmationDialogState? _confirmation;
@@ -847,6 +848,11 @@ public sealed class OptinstallerImGuiApp : IDisposable
                 StartUiTask(() => _mainViewModel.Versions.LoadVersions(), "Could not refresh versions");
             }
 
+            if (ImGui.MenuItem("Add Watched Folder"))
+            {
+                PromptAddWatchedLibrary();
+            }
+
             if (ImGui.MenuItem("Rescan Library"))
             {
                 StartUiTask(() => _mainViewModel.Dashboard.InitializeAsync(), "Could not refresh library");
@@ -1051,12 +1057,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         var dashboard = _mainViewModel.Dashboard;
         var allGames = new List<GameInstance>(dashboard.Games);
+        PruneBulkSelection(allGames);
         var filteredGames = GetFilteredGames(allGames, _dashboardSearchQuery);
         var selectedGame = ResolveSelectedGame(dashboard, filteredGames);
         var installedCount = CountInstalledGames();
         var pendingCount = allGames.Count - installedCount;
 
-        RenderPageHeader("Dashboard", "Manage installs directly or open per-game details.");
+        RenderPageHeader("Dashboard", "Manage installs directly or auto-scan watched folders.");
         RenderDashboardToolbar(dashboard, allGames.Count, installedCount, pendingCount);
 
         ImGui.Spacing();
@@ -1080,12 +1087,15 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.SameLine();
         TextMuted($"Showing {filteredGames.Count} of {allGames.Count} games");
 
+        RenderWatchedLibrariesSection(dashboard);
+        RenderDashboardBulkActions(dashboard, allGames, filteredGames);
+
         ImGui.Spacing();
         if (allGames.Count == 0 && dashboard.IsLoadingLibrary)
         {
             RenderCallout(
                 "Scanning your library",
-                "Saved games load first. Auto-detected store installs appear when the scan finishes.",
+                "Saved games load first. Auto-detected store installs and watched folders appear when the scan finishes.",
                 InfoColor);
             return;
         }
@@ -1094,7 +1104,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             RenderCallout(
                 "No games added yet",
-                "Add a game directory to start managing OptiScaler installs. The app remembers tracked paths between launches.",
+                "Add a game executable or watch a library folder to start managing OptiScaler installs. The app remembers both between launches.",
                 InfoColor);
             return;
         }
@@ -1130,9 +1140,10 @@ public sealed class OptinstallerImGuiApp : IDisposable
         foreach (var game in filteredGames)
         {
             var isSelected = selectedGame != null && selectedGame.GamePath.Equals(game.GamePath, StringComparison.OrdinalIgnoreCase);
+            var isBulkSelected = IsBulkSelected(game);
             var action = game.IsInstalled
-                ? DrawInstalledGameRow(game, isSelected)
-                : DrawPendingGameRow(game, isSelected, canQuickInstall);
+                ? DrawInstalledGameRow(game, isSelected, isBulkSelected)
+                : DrawPendingGameRow(game, isSelected, isBulkSelected, canQuickInstall);
 
             if (action == DashboardGameRowAction.None)
             {
@@ -1183,6 +1194,125 @@ public sealed class OptinstallerImGuiApp : IDisposable
     {
         _selectedGamePath = game.GamePath;
         dashboard.SelectedGame = game;
+    }
+
+    private void RenderWatchedLibrariesSection(DashboardViewModel dashboard)
+    {
+        if (dashboard.WatchedLibraryPaths.Count == 0)
+        {
+            return;
+        }
+
+        ImGui.Spacing();
+        RenderSectionHeader($"Watched Folders ({dashboard.WatchedLibraryPaths.Count})");
+        TextMuted("Games found here are auto-scanned with the same detection heuristics used for store libraries.");
+
+        var openWidth = GetButtonWidth("Open Folder", 130f);
+        var removeWidth = GetButtonWidth("Stop Watching", 145f);
+        var actionsWidth = openWidth + removeWidth + ImGui.GetStyle().ItemSpacing.X;
+        if (ImGui.BeginTable("DashboardWatchedFolders", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings))
+        {
+            ImGui.TableSetupColumn("Folder", ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, actionsWidth);
+
+            foreach (var libraryPath in dashboard.WatchedLibraryPaths)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(GetDirectoryDisplayName(libraryPath));
+                TextMuted(TrimText(libraryPath));
+
+                ImGui.TableNextColumn();
+                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + MathF.Max(0f, ImGui.GetContentRegionAvail().X - actionsWidth));
+                if (ImGui.Button($"Open Folder##Watched::{libraryPath}", new Vector2(openWidth, 0f)))
+                {
+                    dashboard.OpenFolder(libraryPath);
+                }
+
+                ImGui.SameLine();
+                if (ImGui.Button($"Stop Watching##Watched::{libraryPath}", new Vector2(removeWidth, 0f)))
+                {
+                    PromptRemoveWatchedLibrary(dashboard, libraryPath);
+                }
+            }
+
+            ImGui.EndTable();
+        }
+    }
+
+    private void RenderDashboardBulkActions(DashboardViewModel dashboard, IReadOnlyList<GameInstance> allGames, IReadOnlyList<GameInstance> filteredGames)
+    {
+        var selectedGames = GetBulkSelectedGames(allGames);
+        var selectedInstalledGames = selectedGames.Where(game => game.IsInstalled).ToList();
+        var selectedPendingGames = selectedGames.Where(game => !game.IsInstalled).ToList();
+        var selectVisibleWidth = GetButtonWidth("Select Visible", 120f);
+        var clearSelectionWidth = GetButtonWidth("Clear Selection", 130f);
+        var upgradeSelectedWidth = GetButtonWidth("Upgrade Selected", 140f);
+        var uninstallSelectedWidth = GetButtonWidth("Uninstall Selected", 150f);
+        var removeSelectedWidth = GetButtonWidth("Remove Selected", 140f);
+
+        ImGui.Spacing();
+        RenderSectionHeader("Bulk Actions");
+        TextMuted("Use the row checkboxes to select multiple games. Search can narrow the visible bulk-selection scope.");
+
+        if (ImGui.Button("Select Visible", new Vector2(selectVisibleWidth, 0f)))
+        {
+            SetBulkSelection(filteredGames, isSelected: true);
+            selectedGames = GetBulkSelectedGames(allGames);
+            selectedInstalledGames = selectedGames.Where(game => game.IsInstalled).ToList();
+            selectedPendingGames = selectedGames.Where(game => !game.IsInstalled).ToList();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Clear Selection", new Vector2(clearSelectionWidth, 0f)))
+        {
+            _bulkSelectedGamePaths.Clear();
+            selectedGames.Clear();
+            selectedInstalledGames.Clear();
+            selectedPendingGames.Clear();
+        }
+
+        ImGui.SameLine();
+        TextMuted($"{selectedGames.Count} selected | {selectedInstalledGames.Count} installed | {selectedPendingGames.Count} pending");
+
+        if (selectedGames.Count == 0)
+        {
+            return;
+        }
+
+        ImGui.Spacing();
+        if (dashboard.DownloadedVersions.Count > 0)
+        {
+            var selectedVersion = dashboard.SelectedVersion ?? dashboard.DownloadedVersions[0];
+            DrawVersionCombo("Bulk Version", dashboard.DownloadedVersions, ref selectedVersion);
+            dashboard.SelectedVersion = selectedVersion;
+        }
+        else
+        {
+            TextMuted("Download an OptiScaler version to enable bulk upgrades.");
+        }
+
+        ImGui.Spacing();
+        ImGui.BeginDisabled(selectedInstalledGames.Count == 0 || dashboard.DownloadedVersions.Count == 0 || dashboard.SelectedVersion == null);
+        if (ImGui.Button("Upgrade Selected", new Vector2(upgradeSelectedWidth, 0f)))
+        {
+            PromptBulkUpgrade(dashboard, selectedInstalledGames, dashboard.SelectedVersion!);
+        }
+        ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        ImGui.BeginDisabled(selectedInstalledGames.Count == 0);
+        if (ImGui.Button("Uninstall Selected", new Vector2(uninstallSelectedWidth, 0f)))
+        {
+            PromptBulkUninstall(dashboard, selectedInstalledGames);
+        }
+        ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (ImGui.Button("Remove Selected", new Vector2(removeSelectedWidth, 0f)))
+        {
+            PromptBulkRemove(dashboard, selectedGames);
+        }
     }
 
     private void RenderGameDetails(DashboardViewModel dashboard, GameDetailsDialogState? details)
@@ -2085,12 +2215,19 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         ImGui.SameLine();
+        if (ImGui.Button("Add Library", new Vector2(120f, 0f)))
+        {
+            PromptAddWatchedLibrary();
+        }
+
+        ImGui.SameLine();
         if (ImGui.Button("Rescan Library", new Vector2(130f, 0f)))
         {
             StartUiTask(() => dashboard.InitializeAsync(), "Could not rescan library", "Rescanned library and local versions.");
         }
 
         RenderToolbarStat($"Games {totalGames}");
+        RenderToolbarStat($"Watched {dashboard.WatchedLibraryPaths.Count}");
         RenderToolbarStat($"Installed {installedCount}");
         RenderToolbarStat($"Ready {pendingCount}");
         RenderToolbarStat($"Versions {dashboard.DownloadedVersions.Count}", isLast: !dashboard.IsLoadingLibrary && !dashboard.IsRefreshingAntiCheat);
@@ -2193,14 +2330,19 @@ public sealed class OptinstallerImGuiApp : IDisposable
             if (selectedGame == null)
             {
                 ImGui.TextColored(InfoColor, "Games");
-                ImGui.TextUnformatted(dashboard.IsLoadingLibrary ? "Loading your library" : "Add a game to get started");
+                ImGui.TextUnformatted(dashboard.IsLoadingLibrary ? "Loading your library" : "Add a game or watched folder to get started");
                 TextMuted(dashboard.IsLoadingLibrary
-                    ? "Saved games load first, then auto-detected store installs fill in when the scan finishes."
-                    : "Choose the game's executable, then pick a downloaded version when you are ready to install.");
+                    ? "Saved games load first, then auto-detected store installs and watched folders fill in when the scan finishes."
+                    : "Choose a game's executable for manual tracking, or watch a folder to auto-scan a custom library.");
                 ImGui.Spacing();
                 if (ImGui.Button("Add Game", new Vector2(120f, 0f)))
                 {
                     PromptAddGame();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Add Library", new Vector2(120f, 0f)))
+                {
+                    PromptAddWatchedLibrary();
                 }
                 ImGui.SameLine();
                 if (ImGui.Button("Rescan Library", new Vector2(130f, 0f)))
@@ -2498,6 +2640,99 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }, "Could not add the selected game");
     }
 
+    private void PromptAddWatchedLibrary()
+    {
+        var selectedPath = NativeDialogs.PickFolder("Select Watched Library Folder", _hwnd);
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
+
+        StartUiTask(async () =>
+        {
+            var added = await _mainViewModel.Dashboard.AddWatchedLibrary(selectedPath);
+            if (!added)
+            {
+                SetNotification("That watched folder is already configured.", NotificationKind.Info);
+                return;
+            }
+
+            await _mainViewModel.Dashboard.InitializeAsync();
+            SetNotification($"Watching {selectedPath}.", NotificationKind.Success);
+        }, "Could not add the watched folder");
+    }
+
+    private void PromptRemoveWatchedLibrary(DashboardViewModel dashboard, string libraryPath)
+    {
+        var displayName = GetDirectoryDisplayName(libraryPath);
+        QueueConfirmation(
+            ConfirmationHost.MainWindow,
+            $"Stop watching {displayName}",
+            "This removes the folder from watched libraries and rescans auto-detected games from the remaining libraries. Manually added games stay in your library.",
+            "Remove",
+            async () =>
+            {
+                await dashboard.RemoveWatchedLibrary(libraryPath);
+                await dashboard.InitializeAsync();
+            },
+            $"Stopped watching {libraryPath}.",
+            "Could not remove the watched folder");
+    }
+
+    private void PromptBulkUpgrade(DashboardViewModel dashboard, IReadOnlyList<GameInstance> games, OptiScalerVersion version)
+    {
+        var gameCount = games.Count;
+        QueueConfirmation(
+            ConfirmationHost.MainWindow,
+            $"Upgrade {gameCount} game{(gameCount == 1 ? string.Empty : "s")}",
+            $"Update {gameCount} selected installed game{(gameCount == 1 ? string.Empty : "s")} to {version.TagName}.",
+            "Upgrade",
+            async () =>
+            {
+                var updatedCount = await RunBulkGameActionAsync(games, game => dashboard.UpdateOptiScaler(game, version));
+                SetNotification($"Updated {updatedCount} game{(updatedCount == 1 ? string.Empty : "s")} to {version.TagName}.", NotificationKind.Success);
+            },
+            successMessage: null,
+            failureMessage: "Could not upgrade selected games");
+    }
+
+    private void PromptBulkUninstall(DashboardViewModel dashboard, IReadOnlyList<GameInstance> games)
+    {
+        var gameCount = games.Count;
+        QueueConfirmation(
+            ConfirmationHost.MainWindow,
+            $"Uninstall from {gameCount} game{(gameCount == 1 ? string.Empty : "s")}",
+            "This removes OptiScaler files from the selected games but keeps them in your library.",
+            "Uninstall",
+            async () =>
+            {
+                var uninstalledCount = await RunBulkGameActionAsync(games, dashboard.UninstallOptiScaler);
+                SetNotification($"Uninstalled OptiScaler from {uninstalledCount} game{(uninstalledCount == 1 ? string.Empty : "s")}.", NotificationKind.Success);
+            },
+            successMessage: null,
+            failureMessage: "Could not uninstall selected games");
+    }
+
+    private void PromptBulkRemove(DashboardViewModel dashboard, IReadOnlyList<GameInstance> games)
+    {
+        var gameCount = games.Count;
+        var installedCount = games.Count(game => game.IsInstalled);
+        QueueConfirmation(
+            ConfirmationHost.MainWindow,
+            $"Remove {gameCount} game{(gameCount == 1 ? string.Empty : "s")}",
+            installedCount == 0
+                ? "This removes the selected games from the library."
+                : $"This removes the selected games from the library and uninstalls OptiScaler from {installedCount} installed game{(installedCount == 1 ? string.Empty : "s")}.",
+            "Remove",
+            async () =>
+            {
+                var removedCount = await RunBulkGameActionAsync(games, dashboard.RemoveGame);
+                SetNotification($"Removed {removedCount} game{(removedCount == 1 ? string.Empty : "s")} from the library.", NotificationKind.Success);
+            },
+            successMessage: null,
+            failureMessage: "Could not remove selected games");
+    }
+
     private void PromptChangeGamePath(DashboardViewModel dashboard, GameInstance game)
     {
         var selectedPath = NativeDialogs.PickFile(
@@ -2581,6 +2816,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
             ? new Vector4(MathF.Min(1f, accent.X + 0.10f), MathF.Min(1f, accent.Y + 0.10f), MathF.Min(1f, accent.Z + 0.10f), accent.W)
             : accent);
         return clicked;
+    }
+
+    private static string GetDirectoryDisplayName(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        var trimmedPath = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var directoryName = Path.GetFileName(trimmedPath);
+        return string.IsNullOrWhiteSpace(directoryName) ? trimmedPath : directoryName;
     }
 
     private static string GetOptiScalerQuickPillText(GameInstance game)
@@ -3598,6 +3845,42 @@ public sealed class OptinstallerImGuiApp : IDisposable
         _ = RunUiTaskAsync(action, failureMessage, successMessage);
     }
 
+    private async Task<int> RunBulkGameActionAsync(IReadOnlyList<GameInstance> games, Func<GameInstance, Task> action)
+    {
+        var completedCount = 0;
+        var errors = new List<string>();
+
+        foreach (var game in games)
+        {
+            try
+            {
+                await action(game);
+                completedCount++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{game.Name}: {ex.Message}");
+            }
+        }
+
+        PruneBulkSelection(_mainViewModel.Dashboard.Games);
+
+        if (errors.Count == 0)
+        {
+            return completedCount;
+        }
+
+        var errorSummary = string.Join(" | ", errors.Take(3));
+        if (errors.Count > 3)
+        {
+            errorSummary += $" | {errors.Count - 3} more";
+        }
+
+        throw new InvalidOperationException(completedCount == 0
+            ? errorSummary
+            : $"Completed {completedCount} of {games.Count}. {errorSummary}");
+    }
+
     private void StartProtectedUiTask(
         string directoryPath,
         ConfirmationHost host,
@@ -3673,6 +3956,47 @@ public sealed class OptinstallerImGuiApp : IDisposable
         }
 
         return count;
+    }
+
+    private void PruneBulkSelection(IEnumerable<GameInstance> games)
+    {
+        var availablePaths = games
+            .Select(game => game.GamePath)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        _bulkSelectedGamePaths.RemoveWhere(path => !availablePaths.Contains(path));
+    }
+
+    private bool IsBulkSelected(GameInstance game)
+    {
+        return _bulkSelectedGamePaths.Contains(game.GamePath);
+    }
+
+    private void SetBulkSelection(GameInstance game, bool isSelected)
+    {
+        if (isSelected)
+        {
+            _bulkSelectedGamePaths.Add(game.GamePath);
+            return;
+        }
+
+        _bulkSelectedGamePaths.Remove(game.GamePath);
+    }
+
+    private void SetBulkSelection(IEnumerable<GameInstance> games, bool isSelected)
+    {
+        foreach (var game in games)
+        {
+            SetBulkSelection(game, isSelected);
+        }
+    }
+
+    private List<GameInstance> GetBulkSelectedGames(IEnumerable<GameInstance> games)
+    {
+        return games
+            .Where(game => IsBulkSelected(game))
+            .ToList();
     }
 
     private static List<GameInstance> GetFilteredGames(IEnumerable<GameInstance> games, string query)
@@ -3801,19 +4125,21 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.PopStyleColor(2);
     }
 
-    private DashboardGameRowAction DrawInstalledGameRow(GameInstance game, bool selected)
+    private DashboardGameRowAction DrawInstalledGameRow(GameInstance game, bool selected, bool bulkSelected)
     {
         var uninstallWidth = GetButtonWidth("Uninstall", 110f);
         var detailsWidth = GetButtonWidth("Details", 110f);
         var actionSpacing = 8f;
         var actionsWidth = uninstallWidth + actionSpacing + detailsWidth;
+        var checkboxSize = ImGui.GetFrameHeight();
+        var checkboxAreaWidth = checkboxSize + 12f;
 
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
         var min = ImGui.GetCursorScreenPos();
         var availableWidth = MathF.Max(0f, ImGui.GetContentRegionAvail().X - 6f);
         var lineHeight = ImGui.GetTextLineHeight();
         var buttonHeight = ImGui.GetFrameHeight();
-        var contentLeft = min.X + 16f;
+        var contentLeft = min.X + 16f + checkboxAreaWidth;
         var contentRight = min.X + MathF.Max(1f, availableWidth - actionsWidth - 32f);
         var pillsWidth = MathF.Max(1f, contentRight - contentLeft);
         var pillsHeight = MeasureInstalledGamePillsHeight(game, pillsWidth);
@@ -3830,9 +4156,9 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.Dummy(size);
         var rowEndCursorPos = ImGui.GetCursorPos();
 
-        var selectWidth = MathF.Max(1f, availableWidth - actionsWidth - 24f);
+        var selectWidth = MathF.Max(1f, availableWidth - actionsWidth - 24f - checkboxAreaWidth);
         var selectHeight = MathF.Min(rowHeight, MathF.Max(44f, (lineHeight * 2f) + 20f));
-        ImGui.SetCursorScreenPos(min);
+        ImGui.SetCursorScreenPos(new Vector2(min.X + checkboxAreaWidth, min.Y));
         ImGui.InvisibleButton($"GameSelect::{game.GamePath}", new Vector2(selectWidth, selectHeight));
         var hovered = ImGui.IsItemHovered();
         var selectClicked = ImGui.IsItemClicked();
@@ -3887,10 +4213,18 @@ public sealed class OptinstallerImGuiApp : IDisposable
         var pillLayouts = DrawInstalledGamePills(drawList, pillsOrigin, pillsWidth, game);
 
         var buttonY = min.Y + MathF.Max(8f, (rowHeight - buttonHeight) * 0.5f);
+        var checkboxY = min.Y + MathF.Max(8f, (rowHeight - checkboxSize) * 0.5f);
         var uninstallX = max.X - actionsWidth - 16f;
         DashboardGameRowAction action = selectClicked ? DashboardGameRowAction.Select : DashboardGameRowAction.None;
 
         ImGui.PushID(game.GamePath);
+        var isBulkSelected = bulkSelected;
+        ImGui.SetCursorScreenPos(new Vector2(min.X + 16f, checkboxY));
+        if (ImGui.Checkbox("##BulkSelect", ref isBulkSelected))
+        {
+            SetBulkSelection(game, isBulkSelected);
+        }
+
         ImGui.SetCursorScreenPos(pillLayouts.VersionPill.Min);
         if (ImGui.InvisibleButton("UpdatePill", pillLayouts.VersionPill.Size))
         {
@@ -3931,12 +4265,14 @@ public sealed class OptinstallerImGuiApp : IDisposable
         return action;
     }
 
-    private DashboardGameRowAction DrawPendingGameRow(GameInstance game, bool selected, bool canInstall)
+    private DashboardGameRowAction DrawPendingGameRow(GameInstance game, bool selected, bool bulkSelected, bool canInstall)
     {
         var installWidth = GetButtonWidth("Install", 110f);
         var detailsWidth = GetButtonWidth("Details", 110f);
         var actionSpacing = 8f;
         var actionsWidth = installWidth + actionSpacing + detailsWidth;
+        var checkboxSize = ImGui.GetFrameHeight();
+        var checkboxAreaWidth = checkboxSize + 12f;
 
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
         var min = ImGui.GetCursorScreenPos();
@@ -3954,8 +4290,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.Dummy(size);
         var rowEndCursorPos = ImGui.GetCursorPos();
 
-        var selectWidth = MathF.Max(1f, size.X - actionsWidth - 24f);
-        ImGui.SetCursorScreenPos(min);
+        var selectWidth = MathF.Max(1f, size.X - actionsWidth - 24f - checkboxAreaWidth);
+        ImGui.SetCursorScreenPos(new Vector2(min.X + checkboxAreaWidth, min.Y));
         ImGui.InvisibleButton($"GameSelect::{game.GamePath}", new Vector2(selectWidth, rowHeight));
         var hovered = ImGui.IsItemHovered();
         var selectClicked = ImGui.IsItemClicked();
@@ -3997,15 +4333,23 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
         var contentHeight = (lineHeight * 2f) + 3f;
         var textStartY = min.Y + MathF.Max(8f, (rowHeight - contentHeight) * 0.5f);
-        var contentLeft = min.X + 16f;
+        var contentLeft = min.X + 16f + checkboxAreaWidth;
         drawList.AddText(new Vector2(contentLeft, textStartY), textColor, game.Name);
         drawList.AddText(new Vector2(contentLeft, textStartY + lineHeight + 3f), detailColor, detail);
 
         var buttonY = min.Y + MathF.Max(8f, (rowHeight - buttonHeight) * 0.5f);
+        var checkboxY = min.Y + MathF.Max(8f, (rowHeight - checkboxSize) * 0.5f);
         var installX = max.X - actionsWidth - 16f;
         DashboardGameRowAction action = selectClicked ? DashboardGameRowAction.Select : DashboardGameRowAction.None;
 
         ImGui.PushID(game.GamePath);
+        var isBulkSelected = bulkSelected;
+        ImGui.SetCursorScreenPos(new Vector2(min.X + 16f, checkboxY));
+        if (ImGui.Checkbox("##BulkSelect", ref isBulkSelected))
+        {
+            SetBulkSelection(game, isBulkSelected);
+        }
+
         ImGui.SetCursorScreenPos(new Vector2(installX, buttonY));
         ImGui.BeginDisabled(!canInstall);
         if (ImGui.Button("Install", new Vector2(installWidth, 0f)))

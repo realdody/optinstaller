@@ -101,6 +101,9 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
     private ObservableCollection<OptiScalerVersion> _downloadedVersions = new();
 
     [ObservableProperty]
+    private ObservableCollection<string> _watchedLibraryPaths = new();
+
+    [ObservableProperty]
     private OptiScalerVersion? _selectedVersion;
 
     [ObservableProperty]
@@ -170,6 +173,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             SetLibraryLoadState(isLoading: true, isScanning: false, status: "Loading saved games...");
 
             await _configService.LoadAsync();
+            RefreshWatchedLibraryPaths();
             await RefreshDownloadedVersionsAsync();
 
             if (!IsCurrentLibraryLoad(loadVersion))
@@ -185,8 +189,8 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
                 isLoading: true,
                 isScanning: true,
                 status: savedGames.Count == 0
-                    ? "Scanning installed games..."
-                    : $"Loaded {savedGames.Count} saved game{(savedGames.Count == 1 ? string.Empty : "s")}. Scanning installed games...");
+                    ? GetAutoScanStatusText()
+                    : $"Loaded {savedGames.Count} saved game{(savedGames.Count == 1 ? string.Empty : "s")}. {GetAutoScanStatusText()}");
 
             var scannedGames = await Task.Run(() => LoadAutoDetectedGames(savedGames));
             if (!IsCurrentLibraryLoad(loadVersion))
@@ -200,7 +204,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             }
 
             SetLibraryLoadState(isLoading: false, isScanning: false, status: string.Empty);
-            SafeFireAndForget(NormalizeSavedGamePathsAsync());
+            SafeFireAndForget(NormalizePersistedPathsAsync());
             SafeFireAndForget(RefreshUpscalerDetectionAsync(loadVersion));
             SafeFireAndForget(RefreshAntiCheatAsync(loadVersion));
         }
@@ -251,7 +255,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             .Select(game => game.GamePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var games = new List<GameInstance>();
-        var scannedGames = _gameScannerService.ScanInstalledGames();
+        var scannedGames = _gameScannerService.ScanInstalledGames(GetWatchedLibraryPaths());
         foreach (var scannedGame in scannedGames)
         {
             var game = CreateGameInternal(
@@ -279,6 +283,17 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         }
 
         return games;
+    }
+
+    private string GetAutoScanStatusText()
+    {
+        var watchedLibraryCount = WatchedLibraryPaths.Count;
+        if (watchedLibraryCount == 0)
+        {
+            return "Scanning installed games...";
+        }
+
+        return $"Scanning installed games and {watchedLibraryCount} watched folder{(watchedLibraryCount == 1 ? string.Empty : "s")}...";
     }
 
     private bool IsSupportedAutoScannedGame(GameInstance game)
@@ -514,6 +529,53 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         return game;
     }
 
+    public async Task<bool> AddWatchedLibrary(string rawPath)
+    {
+        if (string.IsNullOrWhiteSpace(rawPath))
+        {
+            throw new InvalidOperationException("Select a valid folder.");
+        }
+
+        var fullPath = Path.GetFullPath(rawPath);
+        if (!Directory.Exists(fullPath))
+        {
+            throw new InvalidOperationException("Select a valid folder.");
+        }
+
+        var normalizedPath = NormalizeGamePath(fullPath);
+        var watchedLibraryPaths = GetWatchedLibraryPaths();
+        if (watchedLibraryPaths.Any(existing => existing.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        watchedLibraryPaths.Add(normalizedPath);
+        SaveWatchedLibraryPaths(watchedLibraryPaths);
+        await _configService.SaveAsync();
+        return true;
+    }
+
+    public async Task<bool> RemoveWatchedLibrary(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var normalizedPath = NormalizeGamePath(path);
+        var watchedLibraryPaths = GetWatchedLibraryPaths();
+        var removed = watchedLibraryPaths.RemoveAll(existing =>
+            existing.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)) > 0;
+        if (!removed)
+        {
+            return false;
+        }
+
+        SaveWatchedLibraryPaths(watchedLibraryPaths);
+        await _configService.SaveAsync();
+        return true;
+    }
+
     private GameInstance AddGameInternal(string path, string? executablePath = null, string? preferredDisplayName = null, string? scanSource = null, string? scanSourceId = null, string? preferredExecutablePathHint = null)
     {
         var game = CreateGameInternal(path, executablePath, preferredDisplayName, scanSource, scanSourceId, preferredExecutablePathHint)
@@ -566,16 +628,16 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
     private static string ResolveGameDisplayName(string gamePath, string? executablePath, string? preferredDisplayName = null)
     {
-        var metadataName = TryGetExecutableMetadataName(executablePath);
-        if (!string.IsNullOrWhiteSpace(metadataName))
-        {
-            return metadataName;
-        }
-
         var cleanedPreferredName = CleanGameName(preferredDisplayName ?? string.Empty);
         if (!string.IsNullOrWhiteSpace(cleanedPreferredName))
         {
             return cleanedPreferredName;
+        }
+
+        var metadataName = TryGetExecutableMetadataName(executablePath, gamePath);
+        if (!string.IsNullOrWhiteSpace(metadataName))
+        {
+            return metadataName;
         }
 
         if (!string.IsNullOrWhiteSpace(executablePath))
@@ -1114,27 +1176,9 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
                 }
             }
 
-            string? metadataName = null;
-            foreach (var candidate in new[] { info.ProductName, info.FileDescription })
-            {
-                if (LooksLikeUnreadableMetadata(candidate))
-                {
-                    continue;
-                }
-
-                var cleanedCandidate = CleanGameName(candidate ?? string.Empty);
-                if (string.IsNullOrWhiteSpace(cleanedCandidate) || IsGenericExecutableMetadata(cleanedCandidate))
-                {
-                    continue;
-                }
-
-                metadataName = cleanedCandidate;
-                break;
-            }
-
             var hasGenericMetadata = IsGenericExecutableMetadata(info.ProductName ?? string.Empty) ||
                                      IsGenericExecutableMetadata(info.FileDescription ?? string.Empty);
-            return new ExecutableMetadataInfo(metadataName, hasGenericMetadata, values);
+            return new ExecutableMetadataInfo(SelectExecutableMetadataName(executablePath, info), hasGenericMetadata, values);
         }
         catch
         {
@@ -1191,9 +1235,21 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         return currentDirectory?.Name ?? Path.GetFileName(gamePath);
     }
 
-    private static string? TryGetExecutableMetadataName(string? executablePath)
+    private static string? TryGetExecutableMetadataName(string? executablePath, string? gamePath = null)
     {
-        return ReadExecutableMetadataInfo(executablePath).Name;
+        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            return SelectExecutableMetadataName(executablePath, FileVersionInfo.GetVersionInfo(executablePath), gamePath);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool LooksLikeUnreadableMetadata(string? value)
@@ -1217,6 +1273,167 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
                normalizedValue.Equals("UE5 Game", StringComparison.OrdinalIgnoreCase) ||
                normalizedValue.Equals("UE 5 Game", StringComparison.OrdinalIgnoreCase) ||
                normalizedValue.Equals("Unreal Engine", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? SelectExecutableMetadataName(string executablePath, FileVersionInfo info, string? gamePath = null)
+    {
+        var cleanedFolderName = string.IsNullOrWhiteSpace(gamePath)
+            ? string.Empty
+            : CleanGameName(GetPreferredGameDirectoryName(gamePath));
+
+        string? bestCandidate = null;
+        var bestScore = int.MinValue;
+
+        foreach (var candidate in new[]
+                 {
+                     (RawValue: info.FileDescription, IsFileDescription: true),
+                     (RawValue: info.ProductName, IsFileDescription: false),
+                 })
+        {
+            if (LooksLikeUnreadableMetadata(candidate.RawValue))
+            {
+                continue;
+            }
+
+            var cleanedCandidate = CleanGameName(candidate.RawValue ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(cleanedCandidate) ||
+                IsGenericExecutableMetadata(cleanedCandidate) ||
+                LooksLikeExecutableFilenameMetadata(candidate.RawValue, cleanedCandidate, executablePath, info))
+            {
+                continue;
+            }
+
+            var score = ScoreExecutableMetadataCandidate(candidate.RawValue ?? string.Empty, cleanedCandidate, cleanedFolderName, candidate.IsFileDescription);
+            if (score > bestScore)
+            {
+                bestCandidate = cleanedCandidate;
+                bestScore = score;
+            }
+        }
+
+        return bestCandidate;
+    }
+
+    private static int ScoreExecutableMetadataCandidate(string rawValue, string cleanedValue, string cleanedFolderName, bool isFileDescription)
+    {
+        var score = isFileDescription ? 3 : 0;
+        var tokens = GetNameTokens(cleanedValue);
+        score += tokens.Count switch
+        {
+            >= 3 => 4,
+            2 => 2,
+            _ => 0,
+        };
+
+        if (cleanedValue.Contains(' ', StringComparison.Ordinal))
+        {
+            score += 1;
+        }
+
+        if (rawValue.IndexOfAny(new[] { ':', '\'', '&' }) >= 0)
+        {
+            score += 1;
+        }
+
+        if (LooksLikeShortIdentifier(rawValue, cleanedValue, tokens.Count))
+        {
+            score -= 4;
+        }
+
+        if (!string.IsNullOrWhiteSpace(cleanedFolderName))
+        {
+            score += GetNameTokenOverlapCount(cleanedValue, cleanedFolderName) * 2;
+        }
+
+        return score;
+    }
+
+    private static bool LooksLikeShortIdentifier(string rawValue, string cleanedValue, int tokenCount)
+    {
+        var collapsedRawValue = Regex.Replace(rawValue.Trim(), @"[^A-Za-z0-9]", string.Empty);
+        if (collapsedRawValue.Length == 0)
+        {
+            return false;
+        }
+
+        return tokenCount <= 2 &&
+               collapsedRawValue.Length <= 6 &&
+               Regex.IsMatch(collapsedRawValue, @"^(?=.*[A-Z])[A-Z0-9]+$");
+    }
+
+    private static int GetNameTokenOverlapCount(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return 0;
+        }
+
+        var leftTokens = GetNameTokens(left);
+        var rightTokens = GetNameTokens(right);
+        if (leftTokens.Count == 0 || rightTokens.Count == 0)
+        {
+            return 0;
+        }
+
+        leftTokens.IntersectWith(rightTokens);
+        return leftTokens.Count;
+    }
+
+    private static HashSet<string> GetNameTokens(string value)
+    {
+        return Regex.Matches(value, @"[A-Za-z0-9]+")
+            .Select(match => match.Value)
+            .Where(token => !string.IsNullOrWhiteSpace(token))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeExecutableFilenameMetadata(string? rawValue, string cleanedValue, string executablePath, FileVersionInfo info)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return false;
+        }
+
+        var trimmedValue = rawValue.Trim();
+        if (trimmedValue.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+            trimmedValue.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        foreach (var filenameLikeValue in new[]
+                 {
+                     Path.GetFileName(executablePath),
+                     Path.GetFileNameWithoutExtension(executablePath),
+                     LooksLikeBinaryFilenameValue(info.OriginalFilename) ? info.OriginalFilename : null,
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(filenameLikeValue))
+            {
+                continue;
+            }
+
+            var cleanedFilenameLikeValue = CleanGameName(Path.GetFileNameWithoutExtension(filenameLikeValue) ?? filenameLikeValue);
+            if (!string.IsNullOrWhiteSpace(cleanedFilenameLikeValue) &&
+                cleanedValue.Equals(cleanedFilenameLikeValue, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeBinaryFilenameValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmedValue = value.Trim();
+        return trimmedValue.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+               trimmedValue.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string CleanGameName(string value)
@@ -1420,7 +1637,7 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         }
     }
 
-    private async Task NormalizeSavedGamePathsAsync()
+    private async Task NormalizePersistedPathsAsync()
     {
         var normalizedGames = new List<SavedGameEntry>();
         foreach (var savedGame in GetSavedGames())
@@ -1440,6 +1657,13 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         }
 
         var normalizedHiddenPaths = _configService.CurrentConfig.HiddenScannedGamePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(NormalizeGamePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var normalizedWatchedLibraryPaths = _configService.CurrentConfig.WatchedLibraryPaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(NormalizeGamePath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1467,10 +1691,20 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .ToList();
 
+        var currentWatchedLibraryPaths = _configService.CurrentConfig.WatchedLibraryPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToList();
+
         if (!changed)
         {
             changed = currentHiddenPaths.Count != normalizedHiddenPaths.Count ||
-                      !currentHiddenPaths.SequenceEqual(normalizedHiddenPaths, StringComparer.OrdinalIgnoreCase);
+                       !currentHiddenPaths.SequenceEqual(normalizedHiddenPaths, StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (!changed)
+        {
+            changed = currentWatchedLibraryPaths.Count != normalizedWatchedLibraryPaths.Count ||
+                      !currentWatchedLibraryPaths.SequenceEqual(normalizedWatchedLibraryPaths, StringComparer.OrdinalIgnoreCase);
         }
 
         if (!changed)
@@ -1481,6 +1715,9 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         SaveSavedGames(normalizedGames);
         _configService.CurrentConfig.HiddenScannedGamePaths.Clear();
         _configService.CurrentConfig.HiddenScannedGamePaths.AddRange(normalizedHiddenPaths);
+        _configService.CurrentConfig.WatchedLibraryPaths.Clear();
+        _configService.CurrentConfig.WatchedLibraryPaths.AddRange(normalizedWatchedLibraryPaths);
+        RefreshWatchedLibraryPaths();
         await _configService.SaveAsync();
     }
 
@@ -1565,6 +1802,35 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
 
         _configService.CurrentConfig.SavedGamePaths.Clear();
         _configService.CurrentConfig.SavedGamePaths.AddRange(normalizedGames.Select(saved => saved.GamePath));
+    }
+
+    private List<string> GetWatchedLibraryPaths()
+    {
+        return _configService.CurrentConfig.WatchedLibraryPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(NormalizeGamePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private void SaveWatchedLibraryPaths(IEnumerable<string> watchedLibraryPaths)
+    {
+        var normalizedPaths = watchedLibraryPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(NormalizeGamePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _configService.CurrentConfig.WatchedLibraryPaths.Clear();
+        _configService.CurrentConfig.WatchedLibraryPaths.AddRange(normalizedPaths);
+        RefreshWatchedLibraryPaths();
+    }
+
+    private void RefreshWatchedLibraryPaths()
+    {
+        WatchedLibraryPaths = new ObservableCollection<string>(GetWatchedLibraryPaths());
     }
 
     private HashSet<string> GetHiddenScannedGamePaths()
@@ -1661,20 +1927,22 @@ public partial class DashboardViewModel : ViewModelBase, IRecipient<VersionsChan
         return currentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
-    public void OpenGameFolder(GameInstance? game)
+    public void OpenFolder(string? path)
     {
-        if (game == null || string.IsNullOrEmpty(game.GamePath))
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
         {
             return;
         }
 
-        if (Directory.Exists(game.GamePath))
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = game.GamePath,
-                UseShellExecute = true
-            });
-        }
+            FileName = path,
+            UseShellExecute = true
+        });
+    }
+
+    public void OpenGameFolder(GameInstance? game)
+    {
+        OpenFolder(game?.GamePath);
     }
 }

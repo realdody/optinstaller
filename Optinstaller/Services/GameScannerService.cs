@@ -17,24 +17,36 @@ namespace Optinstaller.Services;
 
 public sealed class GameScannerService
 {
+    private static readonly string[] IgnoredWatchedLibraryDirectoryNames =
+    {
+        "steamapps", "_CommonRedist", "CommonRedist", "DirectXRedist", "Redistributables", "Redist",
+        "Support", "Tools", "Tool", "__Installer", "Installer", "Install", "Launcher", "Launchers",
+        "EasyAntiCheat", "BattlEye", "Engine"
+    };
+
+    private static readonly string[] StructuralGameDirectoryNames =
+    {
+        "Binaries", "Binary", "Bin", "Win64", "Win32", "WinGDK", "x64", "x86", "Release", "Debug", "Retail"
+    };
+
     private readonly SteamAppInfoService _steamAppInfoService = new();
 
-    public IReadOnlyList<ScannedGame> ScanInstalledGames()
+    public IReadOnlyList<ScannedGame> ScanInstalledGames(IEnumerable<string>? watchedLibraryPaths = null)
     {
-        if (!OperatingSystem.IsWindows())
+        var results = new Dictionary<string, ScannedGame>(StringComparer.OrdinalIgnoreCase);
+        if (OperatingSystem.IsWindows())
         {
-            return Array.Empty<ScannedGame>();
+            var steamAppInfoIndex = _steamAppInfoService.Load();
+
+            Merge(results, ScanSteamGames(steamAppInfoIndex));
+            Merge(results, ScanGogGames());
+            Merge(results, ScanEpicGames());
+            Merge(results, ScanEaDesktopGames());
+            Merge(results, ScanOriginGames());
+            Merge(results, ScanXboxGames());
         }
 
-        var results = new Dictionary<string, ScannedGame>(StringComparer.OrdinalIgnoreCase);
-        var steamAppInfoIndex = _steamAppInfoService.Load();
-
-        Merge(results, ScanSteamGames(steamAppInfoIndex));
-        Merge(results, ScanGogGames());
-        Merge(results, ScanEpicGames());
-        Merge(results, ScanEaDesktopGames());
-        Merge(results, ScanOriginGames());
-        Merge(results, ScanXboxGames());
+        Merge(results, ScanWatchedLibraries(watchedLibraryPaths ?? Array.Empty<string>()));
 
         return results.Values
             .OrderBy(game => game.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -156,6 +168,41 @@ public sealed class GameScannerService
         }
     }
 
+    private static IEnumerable<ScannedGame> ScanWatchedLibraries(IEnumerable<string> watchedLibraryPaths)
+    {
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var watchedLibraryPath in watchedLibraryPaths)
+        {
+            if (string.IsNullOrWhiteSpace(watchedLibraryPath))
+            {
+                continue;
+            }
+
+            string normalizedLibraryPath;
+            try
+            {
+                normalizedLibraryPath = NormalizeDirectoryPath(watchedLibraryPath);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var scanRoot in GetWatchedLibraryScanRoots(normalizedLibraryPath))
+            {
+                foreach (var candidatePath in EnumerateWatchedLibraryCandidates(scanRoot))
+                {
+                    if (!seenPaths.Add(candidatePath))
+                    {
+                        continue;
+                    }
+
+                    yield return new ScannedGame(string.Empty, candidatePath, "Watched Folder", normalizedLibraryPath);
+                }
+            }
+        }
+    }
+
     private static IEnumerable<ScannedGame> ExtractGames<TGame>(IEnumerable<OneOf.OneOf<TGame, ErrorMessage>> results, Func<TGame, ScannedGame?> selector)
         where TGame : class, IGame
     {
@@ -176,6 +223,136 @@ public sealed class GameScannerService
 
             yield return scannedGame;
         }
+    }
+
+    private static IEnumerable<string> GetWatchedLibraryScanRoots(string libraryPath)
+    {
+        if (!Directory.Exists(libraryPath))
+        {
+            yield break;
+        }
+
+        var leafDirectoryName = Path.GetFileName(libraryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (string.Equals(leafDirectoryName, "common", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(Path.GetFileName(Path.GetDirectoryName(libraryPath) ?? string.Empty), "steamapps", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return libraryPath;
+            yield break;
+        }
+
+        var directCommonPath = Path.Combine(libraryPath, "common");
+        if (string.Equals(leafDirectoryName, "steamapps", StringComparison.OrdinalIgnoreCase) && Directory.Exists(directCommonPath))
+        {
+            yield return NormalizeDirectoryPath(directCommonPath);
+            yield break;
+        }
+
+        var steamCommonPath = Path.Combine(libraryPath, "steamapps", "common");
+        if (Directory.Exists(steamCommonPath))
+        {
+            yield return NormalizeDirectoryPath(steamCommonPath);
+            yield break;
+        }
+
+        yield return libraryPath;
+    }
+
+    private static IEnumerable<string> EnumerateWatchedLibraryCandidates(string scanRoot)
+    {
+        if (!Directory.Exists(scanRoot))
+        {
+            yield break;
+        }
+
+        if (LooksLikeStandaloneGameDirectory(scanRoot))
+        {
+            yield return scanRoot;
+        }
+
+        foreach (var childDirectory in EnumerateWatchedLibraryDirectories(scanRoot))
+        {
+            yield return childDirectory;
+
+            if (LooksLikeStandaloneGameDirectory(childDirectory))
+            {
+                continue;
+            }
+
+            foreach (var grandChildDirectory in EnumerateWatchedLibraryDirectories(childDirectory))
+            {
+                yield return grandChildDirectory;
+            }
+        }
+    }
+
+    private static IEnumerable<string> EnumerateWatchedLibraryDirectories(string directoryPath)
+    {
+        IEnumerable<string> childDirectories;
+        try
+        {
+            childDirectories = Directory.EnumerateDirectories(directoryPath, "*", SearchOption.TopDirectoryOnly);
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (var childDirectory in childDirectories)
+        {
+            var directoryName = Path.GetFileName(childDirectory);
+            if (string.IsNullOrWhiteSpace(directoryName) ||
+                IgnoredWatchedLibraryDirectoryNames.Any(name => name.Equals(directoryName, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            yield return NormalizeDirectoryPath(childDirectory);
+        }
+    }
+
+    private static bool LooksLikeStandaloneGameDirectory(string directoryPath)
+    {
+        try
+        {
+            if (Directory.EnumerateFiles(directoryPath, "*.exe", SearchOption.TopDirectoryOnly).Any())
+            {
+                return true;
+            }
+
+            foreach (var childDirectory in Directory.EnumerateDirectories(directoryPath, "*", SearchOption.TopDirectoryOnly))
+            {
+                var directoryName = Path.GetFileName(childDirectory);
+                if (string.IsNullOrWhiteSpace(directoryName) ||
+                    !StructuralGameDirectoryNames.Any(name => name.Equals(directoryName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                if (Directory.EnumerateFiles(childDirectory, "*.exe", SearchOption.TopDirectoryOnly).Any())
+                {
+                    return true;
+                }
+
+                foreach (var grandChildDirectory in Directory.EnumerateDirectories(childDirectory, "*", SearchOption.TopDirectoryOnly))
+                {
+                    if (Directory.EnumerateFiles(grandChildDirectory, "*.exe", SearchOption.TopDirectoryOnly).Any())
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    private static string NormalizeDirectoryPath(string path)
+    {
+        return Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private static string ToNativePath(AbsolutePath path)
