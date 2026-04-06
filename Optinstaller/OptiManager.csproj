@@ -17,6 +17,11 @@
     <Folder Include="Models\" />
   </ItemGroup>
 
+  <!-- Include the prebuilt object so NativeAOT publish will link it into the native EXE. -->
+  <ItemGroup>
+    <NativeLibrary Include="RTSSHooksCompatibility\RTSSHooksCompatibility.obj" Condition="Exists('$(MSBuildProjectDirectory)\RTSSHooksCompatibility\RTSSHooksCompatibility.obj')" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="Assets\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -50,4 +55,26 @@
       <Visible>false</Visible>
     </Content>
   </ItemGroup>
+
+  <!-- Build a tiny native module that exports RTSSHooksCompatibility so RTSS will skip hooking. -->
+  <!-- This target runs after every build and attempts to compile the C source into a DLL next to the exe. -->
+  <Target Name="BuildRTSSCompatibilityModule" AfterTargets="Build">
+    <Message Importance="high" Text="RTSSHooksCompatibility: skipping DLL build; using existing .obj for NativeAOT linking." />
+    <ItemGroup>
+      <_RTSSObj Include="$(MSBuildProjectDirectory)\RTSSHooksCompatibility\RTSSHooksCompatibility.obj" Condition="Exists('$(MSBuildProjectDirectory)\RTSSHooksCompatibility\RTSSHooksCompatibility.obj')" />
+    </ItemGroup>
+    <Message Importance="high" Text="RTSSHooksCompatibility.obj found at %(_RTSSObj.Identity)" Condition=" '@(_RTSSObj)' != '' " />
+    <Warning Text="RTSSHooksCompatibility.obj not found. NativeAOT publish will not include the object; the EXE will not export RTSSHooksCompatibility." Condition=" '@(_RTSSObj)' == '' " />
+  </Target>
+
+  <!-- Publish a NativeAOT native EXE after every build so the final executable exports RTSSHooksCompatibility. -->
+  <!-- Run NativeAOT publish after build, but avoid recursion: when this target launches 'dotnet publish'
+       it passes SkipNativeAotPublish=true so the child publish won't run this target again. -->
+  <!-- Only publish NativeAOT for Release builds. Debug builds use the normal managed output. -->
+  <Target Name="PublishNativeAot" AfterTargets="Build" DependsOnTargets="BuildRTSSCompatibilityModule" Condition=" '$(SkipNativeAotPublish)' != 'true' and '$(Configuration)' == 'Release' ">
+    <Message Importance="high" Text="Starting NativeAOT publish (Release) to produce a native EXE with RTSSHooksCompatibility linked in..." />
+    <!-- Run dotnet publish for this project, enabling NativeAOT and including the prebuilt .obj via NativeLibrary above. -->
+    <Exec Command='dotnet publish "$(MSBuildProjectFullPath)" -r win-x64 -c $(Configuration) -p:PublishAot=true -p:SelfContained=true -p:SkipNativeAotPublish=true -o "$(OutDir)native-publish"' ContinueOnError="true" />
+    <Message Importance="high" Text="NativeAOT publish attempted; check $(OutDir)native-publish for the patched native EXE." />
+  </Target>
 </Project>
