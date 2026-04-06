@@ -11,8 +11,6 @@
     <RootNamespace>Optinstaller</RootNamespace>
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <RtssExportPatcherProject>$(MSBuildThisFileDirectory)..\BuildTools\RtssExportPatcher\RtssExportPatcher.csproj</RtssExportPatcherProject>
-    <RtssExportPatcherExe>$(MSBuildThisFileDirectory)..\BuildTools\RtssExportPatcher\bin\$(Configuration)\net10.0\RtssExportPatcher.exe</RtssExportPatcherExe>
   </PropertyGroup>
 
   <ItemGroup>
@@ -52,16 +50,4 @@
       <Visible>false</Visible>
     </Content>
   </ItemGroup>
-
-  <Target Name="BuildRtssExportPatcher" Condition="'$(OS)' == 'Windows_NT' and Exists('$(RtssExportPatcherProject)')">
-    <MSBuild Projects="$(RtssExportPatcherProject)" Targets="Build" Properties="Configuration=$(Configuration)" />
-  </Target>
-
-  <Target Name="PatchRtssExportAfterBuild" AfterTargets="Build" DependsOnTargets="BuildRtssExportPatcher" Condition="'$(OS)' == 'Windows_NT' and Exists('$(TargetDir)$(AssemblyName).exe') and Exists('$(RtssExportPatcherExe)')">
-    <Exec Command="&quot;$(RtssExportPatcherExe)&quot; &quot;$(TargetDir)$(AssemblyName).exe&quot;" />
-  </Target>
-
-  <Target Name="PatchRtssExportAfterPublish" AfterTargets="Publish" DependsOnTargets="BuildRtssExportPatcher" Condition="'$(OS)' == 'Windows_NT' and Exists('$(PublishDir)$(AssemblyName).exe') and Exists('$(RtssExportPatcherExe)')">
-    <Exec Command="&quot;$(RtssExportPatcherExe)&quot; &quot;$(PublishDir)$(AssemblyName).exe&quot;" />
-  </Target>
 </Project>
