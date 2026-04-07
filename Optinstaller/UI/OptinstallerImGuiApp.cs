@@ -31,16 +31,16 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private const ImGuiWindowFlags ScrollablePanelWindowFlags = ImGuiWindowFlags.None;
     private const ImGuiChildFlags PaddedPanelChildFlags = ImGuiChildFlags.Borders | ImGuiChildFlags.AlwaysUseWindowPadding;
 
-    private static readonly Vector4 InfoColor = new(0.45f, 0.69f, 0.34f, 1f);
-    private static readonly Vector4 SuccessColor = new(0.57f, 0.78f, 0.39f, 1f);
-    private static readonly Vector4 WarningColor = new(0.86f, 0.68f, 0.27f, 1f);
-    private static readonly Vector4 ErrorColor = new(0.82f, 0.42f, 0.36f, 1f);
-    private static readonly Vector4 MutedTextColor = new(0.70f, 0.72f, 0.68f, 1f);
-    private static readonly Vector4 WindowBackgroundColor = new(0.17f, 0.18f, 0.19f, 1f);
-    private static readonly Vector4 PanelBackgroundColor = new(0.21f, 0.22f, 0.23f, 1f);
-    private static readonly Vector4 PanelRaisedBackgroundColor = new(0.24f, 0.25f, 0.26f, 1f);
-    private static readonly Vector4 PanelBorderColor = new(0.34f, 0.39f, 0.31f, 1f);
-    private static readonly Vector4 PrimaryTextColor = new(0.94f, 0.95f, 0.92f, 1f);
+    private static Vector4 InfoColor = new(0.45f, 0.69f, 0.34f, 1f);
+    private static Vector4 SuccessColor = new(0.57f, 0.78f, 0.39f, 1f);
+    private static Vector4 WarningColor = new(0.86f, 0.68f, 0.27f, 1f);
+    private static Vector4 ErrorColor = new(0.82f, 0.42f, 0.36f, 1f);
+    private static Vector4 MutedTextColor = new(0.70f, 0.72f, 0.68f, 1f);
+    private static Vector4 WindowBackgroundColor = new(0.17f, 0.18f, 0.19f, 1f);
+    private static Vector4 PanelBackgroundColor = new(0.21f, 0.22f, 0.23f, 1f);
+    private static Vector4 PanelRaisedBackgroundColor = new(0.24f, 0.25f, 0.26f, 1f);
+    private static Vector4 PanelBorderColor = new(0.34f, 0.39f, 0.31f, 1f);
+    private static Vector4 PrimaryTextColor = new(0.94f, 0.95f, 0.92f, 1f);
     private static readonly ConfigChoice[] BooleanChoices =
     {
         new("false", "Disabled"),
@@ -202,6 +202,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
 
     private Dx11ImGuiRenderer? _renderer;
     private bool _disposed;
+    private ColorScheme _activeColorScheme = ColorScheme.Default;
 
     private AppPage _currentPage = AppPage.Dashboard;
     private NotificationKind _notificationKind = NotificationKind.Info;
@@ -245,7 +246,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             RegisterWindowClass();
             CreateWindow();
-            _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, ApplyTheme);
+            _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, () => ApplyTheme(ColorScheme.Default));
         }
         catch
         {
@@ -320,6 +321,13 @@ public sealed class OptinstallerImGuiApp : IDisposable
         _isRenderingFrame = true;
         try
         {
+            var desiredScheme = _mainViewModel.Settings.ColorScheme;
+            if (desiredScheme != _activeColorScheme)
+            {
+                ApplyTheme(desiredScheme);
+                _activeColorScheme = desiredScheme;
+            }
+
             _uiTime += delta;
             if (!_renderer.BeginFrame(delta, _windowWidth, _windowHeight))
             {
@@ -2023,6 +2031,16 @@ public sealed class OptinstallerImGuiApp : IDisposable
         if (ImGui.Checkbox("Enable overlay by default", ref overlayEnabled))
         {
             settings.EnableOverlay = overlayEnabled;
+        }
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Colour Scheme");
+        ImGui.SetNextItemWidth(-1f);
+        var currentScheme = (int)settings.ColorScheme;
+        var schemeNames = new[] { "Default", "Dracula" };
+        if (ImGui.Combo("##ColorScheme", ref currentScheme, schemeNames, schemeNames.Length))
+        {
+            settings.ColorScheme = (ColorScheme)currentScheme;
         }
 
         ImGui.Spacing();
@@ -5472,7 +5490,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
         ImGui.PopStyleColor();
     }
 
-    private static void ApplyTheme()
+    private static void ApplyTheme(ColorScheme scheme = ColorScheme.Default)
     {
         ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
 
@@ -5493,30 +5511,85 @@ public sealed class OptinstallerImGuiApp : IDisposable
         style.AntiAliasedLinesUseTex = true;
 
         var colors = style.Colors;
-        colors[(int)ImGuiCol.WindowBg] = WindowBackgroundColor;
-        colors[(int)ImGuiCol.ChildBg] = PanelBackgroundColor;
-        colors[(int)ImGuiCol.PopupBg] = new Vector4(0.23f, 0.24f, 0.25f, 0.99f);
-        colors[(int)ImGuiCol.Border] = PanelBorderColor;
-        colors[(int)ImGuiCol.FrameBg] = new Vector4(0.24f, 0.26f, 0.27f, 1f);
-        colors[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.30f, 0.35f, 0.24f, 1f);
-        colors[(int)ImGuiCol.FrameBgActive] = new Vector4(0.36f, 0.43f, 0.26f, 1f);
-        colors[(int)ImGuiCol.TitleBg] = new Vector4(0.20f, 0.21f, 0.22f, 1f);
-        colors[(int)ImGuiCol.TitleBgActive] = new Vector4(0.20f, 0.21f, 0.22f, 1f);
-        colors[(int)ImGuiCol.MenuBarBg] = new Vector4(0.19f, 0.20f, 0.21f, 1f);
-        colors[(int)ImGuiCol.Button] = new Vector4(0.34f, 0.45f, 0.24f, 1f);
-        colors[(int)ImGuiCol.ButtonHovered] = new Vector4(0.42f, 0.55f, 0.29f, 1f);
-        colors[(int)ImGuiCol.ButtonActive] = new Vector4(0.49f, 0.63f, 0.34f, 1f);
-        colors[(int)ImGuiCol.Header] = new Vector4(0.29f, 0.38f, 0.22f, 1f);
-        colors[(int)ImGuiCol.HeaderHovered] = new Vector4(0.37f, 0.49f, 0.28f, 1f);
-        colors[(int)ImGuiCol.HeaderActive] = new Vector4(0.45f, 0.58f, 0.33f, 1f);
-        colors[(int)ImGuiCol.NavCursor] = new Vector4(0.63f, 0.82f, 0.42f, 1f);
-        colors[(int)ImGuiCol.NavWindowingHighlight] = new Vector4(0.55f, 0.74f, 0.36f, 1f);
-        colors[(int)ImGuiCol.CheckMark] = new Vector4(0.74f, 0.89f, 0.55f, 1f);
-        colors[(int)ImGuiCol.SliderGrab] = new Vector4(0.55f, 0.74f, 0.36f, 1f);
-        colors[(int)ImGuiCol.SliderGrabActive] = new Vector4(0.63f, 0.82f, 0.42f, 1f);
-        colors[(int)ImGuiCol.Separator] = PanelBorderColor;
-        colors[(int)ImGuiCol.Text] = PrimaryTextColor;
-        colors[(int)ImGuiCol.TextDisabled] = MutedTextColor;
+
+        if (scheme == ColorScheme.Dracula)
+        {
+            InfoColor = new Vector4(0.50f, 0.44f, 0.84f, 1f);
+            SuccessColor = new Vector4(0.31f, 0.84f, 0.42f, 1f);
+            WarningColor = new Vector4(1.00f, 0.64f, 0.24f, 1f);
+            ErrorColor = new Vector4(1.00f, 0.49f, 0.68f, 1f);
+            MutedTextColor = new Vector4(0.60f, 0.62f, 0.68f, 1f);
+            WindowBackgroundColor = new Vector4(0.16f, 0.16f, 0.19f, 1f);
+            PanelBackgroundColor = new Vector4(0.20f, 0.21f, 0.24f, 1f);
+            PanelRaisedBackgroundColor = new Vector4(0.24f, 0.25f, 0.29f, 1f);
+            PanelBorderColor = new Vector4(0.37f, 0.38f, 0.50f, 1f);
+            PrimaryTextColor = new Vector4(0.95f, 0.95f, 0.96f, 1f);
+
+            colors[(int)ImGuiCol.WindowBg] = WindowBackgroundColor;
+            colors[(int)ImGuiCol.ChildBg] = PanelBackgroundColor;
+            colors[(int)ImGuiCol.PopupBg] = new Vector4(0.24f, 0.25f, 0.30f, 0.99f);
+            colors[(int)ImGuiCol.Border] = PanelBorderColor;
+            colors[(int)ImGuiCol.FrameBg] = new Vector4(0.24f, 0.25f, 0.29f, 1f);
+            colors[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.30f, 0.31f, 0.38f, 1f);
+            colors[(int)ImGuiCol.FrameBgActive] = new Vector4(0.36f, 0.37f, 0.46f, 1f);
+            colors[(int)ImGuiCol.TitleBg] = new Vector4(0.18f, 0.18f, 0.22f, 1f);
+            colors[(int)ImGuiCol.TitleBgActive] = new Vector4(0.18f, 0.18f, 0.22f, 1f);
+            colors[(int)ImGuiCol.MenuBarBg] = new Vector4(0.16f, 0.16f, 0.19f, 1f);
+            colors[(int)ImGuiCol.Button] = InfoColor;
+            colors[(int)ImGuiCol.ButtonHovered] = new Vector4(0.62f, 0.55f, 0.91f, 1f);
+            colors[(int)ImGuiCol.ButtonActive] = new Vector4(0.73f, 0.66f, 0.96f, 1f);
+            colors[(int)ImGuiCol.Header] = new Vector4(0.30f, 0.31f, 0.38f, 1f);
+            colors[(int)ImGuiCol.HeaderHovered] = new Vector4(0.38f, 0.39f, 0.48f, 1f);
+            colors[(int)ImGuiCol.HeaderActive] = new Vector4(0.45f, 0.46f, 0.56f, 1f);
+            colors[(int)ImGuiCol.NavCursor] = new Vector4(0.62f, 0.55f, 0.91f, 1f);
+            colors[(int)ImGuiCol.NavWindowingHighlight] = InfoColor;
+            colors[(int)ImGuiCol.CheckMark] = ErrorColor;
+            colors[(int)ImGuiCol.SliderGrab] = InfoColor;
+            colors[(int)ImGuiCol.SliderGrabActive] = new Vector4(0.62f, 0.55f, 0.91f, 1f);
+            colors[(int)ImGuiCol.Separator] = PanelBorderColor;
+            colors[(int)ImGuiCol.Text] = PrimaryTextColor;
+            colors[(int)ImGuiCol.TextDisabled] = MutedTextColor;
+            colors[(int)ImGuiCol.Tab] = new Vector4(0.24f, 0.25f, 0.29f, 1f);
+            colors[(int)ImGuiCol.TabHovered] = new Vector4(0.62f, 0.55f, 0.91f, 1f);
+        }
+        else
+        {
+            InfoColor = new Vector4(0.45f, 0.69f, 0.34f, 1f);
+            SuccessColor = new Vector4(0.57f, 0.78f, 0.39f, 1f);
+            WarningColor = new Vector4(0.86f, 0.68f, 0.27f, 1f);
+            ErrorColor = new Vector4(0.82f, 0.42f, 0.36f, 1f);
+            MutedTextColor = new Vector4(0.70f, 0.72f, 0.68f, 1f);
+            WindowBackgroundColor = new Vector4(0.17f, 0.18f, 0.19f, 1f);
+            PanelBackgroundColor = new Vector4(0.21f, 0.22f, 0.23f, 1f);
+            PanelRaisedBackgroundColor = new Vector4(0.24f, 0.25f, 0.26f, 1f);
+            PanelBorderColor = new Vector4(0.34f, 0.39f, 0.31f, 1f);
+            PrimaryTextColor = new Vector4(0.94f, 0.95f, 0.92f, 1f);
+
+            colors[(int)ImGuiCol.WindowBg] = WindowBackgroundColor;
+            colors[(int)ImGuiCol.ChildBg] = PanelBackgroundColor;
+            colors[(int)ImGuiCol.PopupBg] = new Vector4(0.23f, 0.24f, 0.25f, 0.99f);
+            colors[(int)ImGuiCol.Border] = PanelBorderColor;
+            colors[(int)ImGuiCol.FrameBg] = new Vector4(0.24f, 0.26f, 0.27f, 1f);
+            colors[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.30f, 0.35f, 0.24f, 1f);
+            colors[(int)ImGuiCol.FrameBgActive] = new Vector4(0.36f, 0.43f, 0.26f, 1f);
+            colors[(int)ImGuiCol.TitleBg] = new Vector4(0.20f, 0.21f, 0.22f, 1f);
+            colors[(int)ImGuiCol.TitleBgActive] = new Vector4(0.20f, 0.21f, 0.22f, 1f);
+            colors[(int)ImGuiCol.MenuBarBg] = new Vector4(0.19f, 0.20f, 0.21f, 1f);
+            colors[(int)ImGuiCol.Button] = new Vector4(0.34f, 0.45f, 0.24f, 1f);
+            colors[(int)ImGuiCol.ButtonHovered] = new Vector4(0.42f, 0.55f, 0.29f, 1f);
+            colors[(int)ImGuiCol.ButtonActive] = new Vector4(0.49f, 0.63f, 0.34f, 1f);
+            colors[(int)ImGuiCol.Header] = new Vector4(0.29f, 0.38f, 0.22f, 1f);
+            colors[(int)ImGuiCol.HeaderHovered] = new Vector4(0.37f, 0.49f, 0.28f, 1f);
+            colors[(int)ImGuiCol.HeaderActive] = new Vector4(0.45f, 0.58f, 0.33f, 1f);
+            colors[(int)ImGuiCol.NavCursor] = new Vector4(0.63f, 0.82f, 0.42f, 1f);
+            colors[(int)ImGuiCol.NavWindowingHighlight] = new Vector4(0.55f, 0.74f, 0.36f, 1f);
+            colors[(int)ImGuiCol.CheckMark] = new Vector4(0.74f, 0.89f, 0.55f, 1f);
+            colors[(int)ImGuiCol.SliderGrab] = new Vector4(0.55f, 0.74f, 0.36f, 1f);
+            colors[(int)ImGuiCol.SliderGrabActive] = new Vector4(0.63f, 0.82f, 0.42f, 1f);
+            colors[(int)ImGuiCol.Separator] = PanelBorderColor;
+            colors[(int)ImGuiCol.Text] = PrimaryTextColor;
+            colors[(int)ImGuiCol.TextDisabled] = MutedTextColor;
+        }
     }
 
     private sealed class NativeWindowHost : IDisposable
@@ -5556,7 +5629,7 @@ public sealed class OptinstallerImGuiApp : IDisposable
             {
                 RegisterWindowClass();
                 CreateWindow(ownerHwnd, title);
-                _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, ApplyTheme);
+            _renderer = new Dx11ImGuiRenderer(_hwnd, _windowWidth, _windowHeight, ConfigureImGuiIo, LoadFonts, () => ApplyTheme(ColorScheme.Default));
 
                 Win32Native.ShowWindow(_hwnd, Win32Native.SW_SHOW);
                 Win32Native.UpdateWindow(_hwnd);
