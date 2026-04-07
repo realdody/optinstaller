@@ -380,32 +380,12 @@ public class VersionService
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            return RuntimeInformation.ProcessArchitecture switch
-            {
-                Architecture.X86 =>
-                [
-                    Path.Combine(assemblyPath, "x86", "7z.dll"),
-                    Path.Combine(assemblyPath, "7z.dll")
-                ],
-                Architecture.X64 =>
-                [
-                    Path.Combine(assemblyPath, "x64", "7z.dll"),
-                    Path.Combine(assemblyPath, "7z64.dll"),
-                    Path.Combine(assemblyPath, "7z.dll")
-                ],
-                Architecture.Arm64 =>
-                [
-                    Path.Combine(assemblyPath, "x64", "7z.dll"),
-                    Path.Combine(assemblyPath, "7z64.dll"),
-                    Path.Combine(assemblyPath, "7z.dll")
-                ],
-                _ =>
-                [
-                    Path.Combine(assemblyPath, "x64", "7z.dll"),
-                    Path.Combine(assemblyPath, "7z64.dll"),
-                    Path.Combine(assemblyPath, "7z.dll")
-                ]
-            };
+            return
+            [
+                Path.Combine(assemblyPath, "x64", "7z.dll"),
+                Path.Combine(assemblyPath, "7z64.dll"),
+                Path.Combine(assemblyPath, "7z.dll")
+            ];
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))

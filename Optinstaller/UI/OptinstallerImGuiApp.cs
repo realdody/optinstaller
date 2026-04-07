@@ -175,12 +175,15 @@ public sealed class OptinstallerImGuiApp : IDisposable
         new("msyh.ttc", FontGlyphRange.ChineseSimplifiedCommon),
         new("malgun.ttf", FontGlyphRange.Korean),
     };
+    private const string BundledHackFontResourceName = "Optinstaller.Assets.Hack-Regular.ttf";
     private static readonly Win32Native.WndProcDelegate WindowProcedureDelegate = WindowProcedure;
-    private static readonly string AppIconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "logo.ico");
+    private static readonly string AppExecutablePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
     private static readonly object AppIconSync = new();
+    private static readonly object BundledHackFontSync = new();
     private static nint _largeAppIcon;
     private static nint _smallAppIcon;
     private static bool _appIconsLoaded;
+    private static string? _bundledHackFontPath;
 
     private readonly UiSynchronizationContext _syncContext;
     private readonly MainWindowViewModel _mainViewModel = new();
@@ -613,32 +616,31 @@ public sealed class OptinstallerImGuiApp : IDisposable
             }
 
             _appIconsLoaded = true;
-            if (!File.Exists(AppIconPath))
+            if (string.IsNullOrWhiteSpace(AppExecutablePath) || !File.Exists(AppExecutablePath))
             {
                 return;
             }
 
-            _largeAppIcon = LoadAppIcon(Win32Native.SM_CXICON, Win32Native.SM_CYICON);
-            _smallAppIcon = LoadAppIcon(Win32Native.SM_CXSMICON, Win32Native.SM_CYSMICON);
+            var largeIcons = new nint[1];
+            var smallIcons = new nint[1];
+            if (Win32Native.ExtractIconEx(AppExecutablePath, 0, largeIcons, smallIcons, 1) == 0)
+            {
+                return;
+            }
+
+            _largeAppIcon = largeIcons[0];
+            _smallAppIcon = smallIcons[0];
 
             if (_smallAppIcon == 0)
             {
                 _smallAppIcon = _largeAppIcon;
             }
-        }
-    }
 
-    private static nint LoadAppIcon(int widthMetric, int heightMetric)
-    {
-        var width = Math.Max(0, Win32Native.GetSystemMetrics(widthMetric));
-        var height = Math.Max(0, Win32Native.GetSystemMetrics(heightMetric));
-        return Win32Native.LoadImage(
-            IntPtr.Zero,
-            AppIconPath,
-            Win32Native.IMAGE_ICON,
-            width,
-            height,
-            Win32Native.LR_LOADFROMFILE | Win32Native.LR_DEFAULTSIZE);
+            if (_largeAppIcon == 0)
+            {
+                _largeAppIcon = _smallAppIcon;
+            }
+        }
     }
 
     private static void ReleaseAppIcons()
@@ -2186,8 +2188,8 @@ public sealed class OptinstallerImGuiApp : IDisposable
     private static void LoadFonts(ImGuiIOPtr io)
     {
         var fontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
-        var bundledHackFont = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "Hack-Regular.ttf");
-        if (TryAddFont(io, bundledHackFont, GetGlyphRanges(io, FontGlyphRange.Default)))
+        var bundledHackFont = EnsureBundledHackFontPath();
+        if (bundledHackFont != null && TryAddFont(io, bundledHackFont, GetGlyphRanges(io, FontGlyphRange.Default)))
         {
             MergeFallbackFonts(io, fontsDirectory);
             return;
@@ -2254,12 +2256,41 @@ public sealed class OptinstallerImGuiApp : IDisposable
         {
             config.MergeMode = true;
             config.PixelSnapH = true;
-            io.Fonts.AddFontFromFileTTF(fontPath, 16f, config, glyphRanges);
+        io.Fonts.AddFontFromFileTTF(fontPath, 16f, config, glyphRanges);
             return true;
         }
         finally
         {
             config.Destroy();
+        }
+    }
+
+    private static string? EnsureBundledHackFontPath()
+    {
+        lock (BundledHackFontSync)
+        {
+            if (!string.IsNullOrWhiteSpace(_bundledHackFontPath) && File.Exists(_bundledHackFontPath))
+            {
+                return _bundledHackFontPath;
+            }
+
+            using var resourceStream = typeof(OptinstallerImGuiApp).Assembly.GetManifestResourceStream(BundledHackFontResourceName);
+            if (resourceStream == null)
+            {
+                return null;
+            }
+
+            var cacheDirectory = Path.Combine(Path.GetTempPath(), "OptiManager");
+            Directory.CreateDirectory(cacheDirectory);
+
+            var fontPath = Path.Combine(cacheDirectory, "Hack-Regular.ttf");
+            using (var fileStream = new FileStream(fontPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+            {
+                resourceStream.CopyTo(fileStream);
+            }
+
+            _bundledHackFontPath = fontPath;
+            return _bundledHackFontPath;
         }
     }
 

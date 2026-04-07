@@ -4,6 +4,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ExcludeSevenZipAssemblies>true</ExcludeSevenZipAssemblies>
     <SharpSevenZipVersion>2.0.36</SharpSevenZipVersion>
     <AssemblyName>OptiManager</AssemblyName>
     <Product>OptiManager</Product>
@@ -12,6 +13,12 @@
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RtssHooksCompatibilityObjectPath>$(MSBuildProjectDirectory)\RTSSHooksCompatibility\RTSSHooksCompatibility.obj</RtssHooksCompatibilityObjectPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>none</DebugType>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,9 +31,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Assets\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <EmbeddedResource Include="Assets\Hack-Regular.ttf">
+      <LogicalName>Optinstaller.Assets.Hack-Regular.ttf</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>
@@ -42,20 +49,22 @@
   </ItemGroup>
 
   <!-- SharpSevenZip native library deployment -->
-  <!-- Native runtime assets for Windows x86/x64 are automatically copied by the Content items below -->
+  <!-- Copy only the x64 SharpSevenZip native library. -->
   <ItemGroup>
-    <!-- Native runtime assets for Windows x86/x64 -->
-    <Content Include="$(NuGetPackageRoot)\sharpsevenzip\$(SharpSevenZipVersion)\runtimes\win-x86\native\7z.dll" Condition="Exists('$(NuGetPackageRoot)\sharpsevenzip\$(SharpSevenZipVersion)\runtimes\win-x86\native\7z.dll')">
-      <Link>x86\7z.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Visible>false</Visible>
-    </Content>
-    <Content Include="$(NuGetPackageRoot)\sharpsevenzip\$(SharpSevenZipVersion)\runtimes\win-x64\native\7z.dll" Condition="Exists('$(NuGetPackageRoot)\sharpsevenzip\$(SharpSevenZipVersion)\runtimes\win-x64\native\7z.dll')">
+    <!-- Native runtime assets for Windows x64 -->
+    <Content Include="$(NuGetPackageRoot)\sharpsevenzip\$(SharpSevenZipVersion)\build\x64\7z.dll" Condition="Exists('$(NuGetPackageRoot)\sharpsevenzip\$(SharpSevenZipVersion)\build\x64\7z.dll')">
       <Link>x64\7z.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Visible>false</Visible>
     </Content>
   </ItemGroup>
+
+  <Target Name="CleanupReleaseOutput" AfterTargets="Build" Condition=" '$(Configuration)' == 'Release' ">
+    <Delete Files="$(OutDir)$(TargetName).pdb;$(OutDir)x86\7z.dll" />
+    <RemoveDir Directories="$(OutDir)Assets" Condition="Exists('$(OutDir)Assets')" />
+    <RemoveDir Directories="$(OutDir)x86" Condition="Exists('$(OutDir)x86')" />
+  </Target>
 
   <!-- Check whether the prebuilt RTSS compatibility object is available for NativeAOT linking. -->
   <Target Name="BuildRTSSCompatibilityModule" AfterTargets="Build">
@@ -76,6 +85,12 @@
     <Error Text="RTSSHooksCompatibility.obj is required for Release NativeAOT publish. Rebuild it from Optinstaller\RTSSHooksCompatibility\RTSSHooksCompatibility.c before publishing." Condition="!Exists('$(RtssHooksCompatibilityObjectPath)')" />
     <!-- Run dotnet publish for this project, enabling NativeAOT and including the prebuilt .obj via NativeLibrary above. -->
     <Exec Command='dotnet publish "$(MSBuildProjectFullPath)" -r win-x64 -c $(Configuration) -p:PublishAot=true -p:SelfContained=true -p:SkipNativeAotPublish=true -o "$(OutDir)native-publish"' />
+    <Delete Files="$(OutDir)native-publish\$(TargetName).pdb;$(OutDir)native-publish\x86\7z.dll;$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\publish\$(TargetName).pdb;$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\publish-aot\$(TargetName).pdb;$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\native\$(TargetName).pdb;$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\native-publish\$(TargetName).pdb" />
+    <RemoveDir Directories="$(OutDir)native-publish\Assets" Condition="Exists('$(OutDir)native-publish\Assets')" />
+    <RemoveDir Directories="$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\publish\Assets" Condition="Exists('$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\publish\Assets')" />
+    <RemoveDir Directories="$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\publish-aot\Assets" Condition="Exists('$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\publish-aot\Assets')" />
+    <RemoveDir Directories="$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\native-publish\Assets" Condition="Exists('$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\native-publish\Assets')" />
+    <RemoveDir Directories="$(OutDir)native-publish\x86" Condition="Exists('$(OutDir)native-publish\x86')" />
     <Message Importance="high" Text="NativeAOT publish completed; check $(OutDir)native-publish for the patched native EXE." />
   </Target>
 </Project>
